@@ -1,0 +1,50 @@
+# ============================================================
+# RP Engine · Git 忽略规则
+# ============================================================
+
+# --- 运行时生成的状态文件 ---
+.pi/state.json
+.pi/state_history.jsonl
+.pi/settings.json
+
+# --- 对话历史（含隐私数据） ---
+.pi/sessions/
+
+# --- 角色卡（第三方内容，用户自行管理） ---
+.pi/cards/
+
+# --- 世界书（运行时生成） ---
+.pi/worldbook/
+
+# --- 用户导入的角色卡 PNG/JSON ---
+*.png
+*.json
+!setup.mjs
+!package.json
+!.rpconfig.example.json
+!tsconfig.json
+
+# --- 依赖 ---
+node_modules/
+.pi/npm/node_modules/
+
+# --- 用户本地配置 ---
+.rpconfig.json
+
+# --- 环境变量 ---
+.env
+.env.local
+
+# --- 日志 ---
+*.log
+
+# --- 系统文件 ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Claude 记忆 ---
+.Claude/
+
+# --- 临时文件 ---
+*.tmp

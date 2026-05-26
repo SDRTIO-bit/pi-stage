@@ -1,0 +1,17 @@
+{
+  "dependencies": {
+    "fast-xml-parser": "^5.8.0",
+    "lodash": "^4.18.1",
+    "png-chunk-text": "^1.0.0",
+    "png-chunks-extract": "^1.0.0",
+    "typebox": "^1.1.38",
+    "ws": "^8.20.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/lodash": "^4.17.24",
+    "@types/node": "^25.9.1",
+    "@types/ws": "^8.18.1",
+    "typescript": "^6.0.3"
+  }
+}

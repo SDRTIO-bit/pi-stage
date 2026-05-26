@@ -1,0 +1,20 @@
+{
+  "character_card": "./characters/example.png",
+  "worldbook_extra_dir": "./worldbook_extra",
+  "token_budget": {
+    "worldbook_max": 1500,
+    "history_max_tokens": 8000
+  },
+  "author_note": "",
+  "model_max_tokens": 128000,
+  "context_mode": "auto",
+  "rp_web_port": 3012,
+  "rp_web_host": "0.0.0.0",
+  "agent_api": {
+    "enabled": false,
+    "port": 3013,
+    "host": "0.0.0.0",
+    "api_key": "",
+    "permission": "dialogue"
+  }
+}

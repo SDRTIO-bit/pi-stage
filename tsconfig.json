@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "moduleResolution": "bundler",
+    "module": "es2022",
+    "target": "es2022",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": [
+    ".pi/extensions/rp-engine/**/*.ts",
+    ".pi/extensions/rp-engine/**/*.d.ts"
+  ]
+}

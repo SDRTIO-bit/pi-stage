@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tau · RP</title>
+  <link rel="stylesheet" href="rp-web-style.css">
+  <style>
+    /* RP 模式开关 */
+    .rp-toggle-btn {
+      background: none;
+      border: 1px solid var(--border, #ccc);
+      border-radius: 12px;
+      padding: 2px 10px;
+      font-size: 13px;
+      cursor: pointer;
+      color: var(--text-secondary, #888);
+      transition: all 0.2s;
+      margin-right: 6px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .rp-toggle-btn.active {
+      background: #fdd835;
+      color: #4e342e;
+      border-color: #5d4037;
+      box-shadow: 0 0 6px rgba(253, 216, 53, 0.5);
+    }
+    .rp-toggle-btn .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #888;
+      display: inline-block;
+    }
+    .rp-toggle-btn.active .dot {
+      background: #e53935;
+      box-shadow: 0 0 4px rgba(229, 57, 53, 0.6);
+    }
+
+    /* 状态面板按钮 */
+    .rp-status-btn {
+      background: none;
+      border: 1px solid var(--border, #ccc);
+      border-radius: 12px;
+      padding: 2px 10px;
+      font-size: 13px;
+      cursor: pointer;
+      color: var(--text-secondary, #888);
+      margin-right: 6px;
+      display: none;
+    }
+    .rp-status-btn.visible {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .rp-status-btn:hover {
+      background: var(--bg-hover, #eee);
+    }
+
+    /* 状态面板弹窗 - 深蓝主题 */
+    .rp-status-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+      justify-content: center;
+      align-items: flex-start;
+      padding-top: 40px;
+    }
+    .rp-status-overlay.open {
+      display: flex;
+    }
+    .rp-status-panel {
+      background: #1a1a2e;
+      border: 2px solid #16213e;
+      border-radius: 8px;
+      max-width: 700px;
+      width: 95%;
+      max-height: 80vh;
+      overflow-y: auto;
+      padding: 16px;
+      position: relative;
+      color: #e0e0e0;
+    }
+    .rp-status-close {
+      position: absolute;
+      top: 8px; right: 8px;
+      background: none;
+      border: none;
+      font-size: 20px;
+      cursor: pointer;
+      color: #90a0c0;
+    }
+    .rp-status-close:hover {
+      color: #fff;
+    }
+
+    /* 角色 Tab - 深蓝主题 */
+    .rp-char-tabs {
+      display: flex;
+      overflow-x: auto;
+      gap: 6px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #0f3460;
+      margin-bottom: 12px;
+    }
+    .rp-char-tab {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 13px;
+      white-space: nowrap;
+      color: #8899bb;
+    }
+    .rp-char-tab.active {
+      background: #0f3460;
+      color: #ffffff;
+      border-color: #1a5276;
+    }
+
+    /* 世界信息条 - 深蓝主题 */
+    .rp-world-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 6px 8px;
+      background: #16213e;
+      border: 1px solid #0f3460;
+      margin-bottom: 10px;
+      font-size: 12px;
+      color: #c0d0e0;
+    }
+    .rp-world-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .rp-world-item .label {
+      background: #0f3460;
+      color: #aaccff;
+      padding: 1px 5px;
+      font-size: 11px;
+      border: 1px solid #1a5276;
+    }
+
+    /* 数据卡片 - 深蓝主题 */
+    .rp-data-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 8px;
+    }
+    .rp-data-box {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      padding: 8px;
+      position: relative;
+      color: #d0d8e0;
+    }
+    .rp-data-box .box-title {
+      position: absolute;
+      top: -9px; left: 8px;
+      background: #1a1a2e;
+      padding: 0 4px;
+      font-size: 11px;
+      font-weight: bold;
+      color: #7a9bcb;
+    }
+    .rp-data-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 3px;
+      border-bottom: 1px dotted #2a3a5e;
+      padding-bottom: 2px;
+      font-size: 13px;
+    }
+    .rp-data-label { color: #8899bb; }
+    .rp-data-value { font-weight: bold; color: #e0e8f0; }
+    .rp-bar-container {
+      width: 100%;
+      height: 10px;
+      border: 1px solid #0f3460;
+      background: #0d1b2a;
+      margin-top: 3px;
+    }
+    .rp-bar-fill {
+      height: 100%;
+      transition: width 0.5s;
+    }
+    .rp-long-text {
+      font-size: 12px;
+      white-space: pre-wrap;
+      background: #0d1b2a;
+      padding: 4px;
+      margin-top: 4px;
+      color: #b0c0d0;
+    }
+    .rp-tag {
+      display: inline-block;
+      font-size: 11px;
+      padding: 1px 4px;
+      border: 1px solid #0f3460;
+      background: #16213e;
+      color: #8899bb;
+      margin: 2px;
+    }
+    .rp-tag.active {
+      background: #0f3460;
+      color: #ffffff;
+    }
+    .rp-char-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      border-bottom: 2px solid #0f3460;
+      padding-bottom: 4px;
+      margin-bottom: 8px;
+    }
+    .rp-char-name {
+      font-size: 18px;
+      font-weight: 900;
+      background: #0f3460;
+      color: #ffffff;
+      padding: 0 4px;
+    }
+    .rp-char-meta {
+      font-size: 12px;
+      color: #7a9bcb;
+    }
+
+    /* 副视角折叠卡片 */
+    .rp-perspective {
+      border: 1px solid var(--border, #4a4a4a);
+      border-radius: 8px;
+      overflow: hidden;
+      margin: 12px 0;
+    }
+    .rp-perspective-toggle {
+      width: 100%;
+      padding: 10px;
+      background: rgba(51,51,51,0.85);
+      border: none;
+      color: #e0e0e0;
+      font-size: 14px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .rp-perspective-toggle:hover {
+      background: rgba(68,68,68,0.9);
+    }
+    .rp-perspective-content {
+      max-height: 0;
+      overflow-y: auto;
+      transition: max-height 0.4s ease;
+      background: rgba(40,40,40,0.95);
+      color: #ccc;
+    }
+    .rp-perspective-content.open {
+      max-height: 600px;
+      border-top: 1px solid #4a4a4a;
+    }
+    .rp-perspective-inner {
+      padding: 12px 16px;
+      line-height: 1.6;
+      font-size: 14px;
+    }
+    .rp-perspective-inner p {
+      margin: 0 0 0.5em;
+    }
+    .rp-perspective-inner p:last-child {
+      margin-bottom: 0;
+    }
+
+    /* 选项按钮 */
+    .rp-choices {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 12px 0 4px 0;
+      justify-content: center;
+    }
+    .rp-choice-btn {
+      background: #0f3460;
+      border: 1px solid #1a5276;
+      color: #c0d8f0;
+      padding: 8px 18px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .rp-choice-btn:hover {
+      background: #1a5276;
+      color: #ffffff;
+      border-color: #2a6a9a;
+      transform: translateY(-1px);
+    }
+    .rp-choice-btn:active {
+      transform: translateY(0px);
+    }
+
+    /* 会话选择器 - 深蓝主题 */
+    .session-picker-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 2000;
+      justify-content: center;
+      align-items: center;
+    }
+    .session-picker-overlay.open {
+      display: flex;
+    }
+    .session-picker-panel {
+      background: #1a1a2e;
+      border: 1px solid #0f3460;
+      border-radius: 10px;
+      max-width: 550px;
+      width: 90%;
+      max-height: 75vh;
+      overflow-y: auto;
+      padding: 20px;
+      color: #e0e0e0;
+    }
+    .session-picker-title {
+      font-size: 18px;
+      font-weight: bold;
+      text-align: center;
+      margin-bottom: 16px;
+      color: #aaccff;
+    }
+    .session-picker-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+    .session-picker-item {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      background: #16213e;
+      border: 1px solid #0f3460;
+      padding: 10px 14px;
+      cursor: pointer;
+      text-align: left;
+      font-family: inherit;
+      color: #c0d0e0;
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+    .session-picker-item:hover {
+      background: #0f3460;
+    }
+    .sp-date {
+      color: #7a9bcb;
+      font-size: 12px;
+      min-width: 70px;
+      flex-shrink: 0;
+    }
+    .sp-preview {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #c0d0e0;
+    }
+    .sp-size {
+      color: #556688;
+      font-size: 11px;
+      min-width: 40px;
+      text-align: right;
+    }
+    .sp-card {
+      color: #e8c97a;
+      font-size: 11px;
+      background: #1a2744;
+      padding: 2px 8px;
+      border-radius: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100px;
+      flex-shrink: 0;
+    }
+    .session-picker-new {
+      width: 100%;
+      padding: 12px;
+      background: #0f3460;
+      border: 1px solid #1a5276;
+      color: #ffffff;
+      font-size: 15px;
+      cursor: pointer;
+      font-family: inherit;
+      text-align: center;
+    }
+    .session-picker-new:hover {
+      background: #1a5276;
+    }
+
+    @media (max-width: 600px) {
+      .rp-data-grid { grid-template-columns: 1fr; }
+      .rp-world-strip { flex-direction: column; align-items: flex-start; }
+    }
+
+    /* 代码终端面板 */
+    .rp-term-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 1001;
+      justify-content: center;
+      align-items: flex-start;
+      padding-top: 60px;
+    }
+    .rp-term-overlay.open {
+      display: flex;
+    }
+    .rp-term-panel {
+      background: #0d1b2a;
+      border: 1px solid #1a5276;
+      border-radius: 8px;
+      max-width: 400px;
+      width: 90%;
+      padding: 16px;
+      color: #c0d8f0;
+    }
+    .rp-term-close {
+      float: right;
+      background: none;
+      border: none;
+      color: #7a9bcb;
+      font-size: 18px;
+      cursor: pointer;
+    }
+    .rp-term-title {
+      font-size: 15px;
+      font-weight: bold;
+      margin-bottom: 12px;
+      color: #fdd835;
+    }
+    .rp-term-presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .rp-term-cmd {
+      background: #16213e;
+      border: 1px solid #1a5276;
+      color: #c0d8f0;
+      padding: 6px 12px;
+      border-radius: 14px;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: inherit;
+      transition: background 0.15s;
+    }
+    .rp-term-cmd:hover {
+      background: #1a5276;
+      color: #fff;
+    }
+    .rp-term-section-title {
+      font-size: 11px;
+      color: #556688;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    #rp-term-input {
+      width: 100%;
+      background: #0f1828;
+      border: 1px solid #1a5276;
+      color: #e0e8f0;
+      padding: 8px;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 13px;
+      resize: vertical;
+      margin-bottom: 8px;
+      border-radius: 4px;
+    }
+    #rp-term-input:focus {
+      outline: none;
+      border-color: #fdd835;
+    }
+    .rp-term-send-btn {
+      background: #fdd835;
+      color: #1a1a2e;
+      border: none;
+      padding: 8px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: bold;
+      font-family: inherit;
+    }
+    .rp-term-send-btn:hover {
+      background: #ffeb3b;
+    }
+
+    /* Slash 命令提示 */
+    .slash-hints {
+      background: #0d1b2a;
+      border: 1px solid #1a5276;
+      border-radius: 8px;
+      padding: 8px;
+      margin-bottom: 4px;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    .slash-hints.hidden { display: none; }
+    .slash-hint {
+      padding: 6px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #c0d8f0;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .slash-hint:hover {
+      background: #16213e;
+      color: #fdd835;
+    }
+    .slash-hint.selected {
+      background: #1a5276;
+      color: #fff;
+    }
+    .slash-cmd {
+      font-family: 'Consolas', monospace;
+      background: #16213e;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 12px;
+      color: #fdd835;
+      min-width: 70px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar removed -->
+
+    <!-- Main -->
+    <div class="main">
+      <!-- Header -->
+      <div class="header">
+        <div class="header-left">
+          
+          <div class="model-dropdown" id="model-dropdown">
+            <button class="model-dropdown-btn" id="model-dropdown-btn">
+              <span id="model-dropdown-label">model</span>
+              <svg width="10" height="6" viewBox="0 0 10 6"><path d="M1 1L5 5L9 1" stroke="currentColor" stroke-width="1.5"/></svg>
+            </button>
+            <div class="model-dropdown-menu hidden" id="model-dropdown-menu"></div>
+          </div>
+          <button class="thinking-tag" id="thinking-btn">off</button>
+        </div>
+        <div class="header-right">
+          <!-- RP 模式开关 -->
+          <button class="rp-toggle-btn" id="rp-mode-btn">
+            <span class="dot"></span>
+            <span>RP</span>
+          </button>
+          <!-- APPEND_SYSTEM 开关 -->
+          <button class="rp-toggle-btn" id="append-style-btn" title="每次发送消息时自动附加 APPEND_SYSTEM.md 风格规范到消息末尾">
+            <span>📋</span>
+            <span>规范</span>
+          </button>
+          <span id="append-style-indicator" style="display:none;font-size:10px;color:#fdd835;margin-left:2px;">ON</span>
+          <!-- 卡片选择按钮 -->
+          <button class="rp-status-btn visible" id="rp-cards-btn" style="margin-right:6px;">🎭 卡片</button>
+          <!-- 会话历史按钮 -->
+          <button class="rp-status-btn visible" id="rp-sessions-btn" style="margin-right:6px;">📜 会话</button>
+          <!-- 状态面板按钮 -->
+          <button class="rp-status-btn" id="rp-status-btn">📊 状态</button>
+          <!-- 设置面板按钮 -->
+          <button class="rp-status-btn" id="rp-settings-btn" style="margin-left:2px;">⚙️</button>
+          <!-- 代码片段按钮 -->
+          <button class="rp-status-btn" id="rp-snippet-btn" style="margin-left:2px;">📋</button>
+          <!-- 代码终端按钮 -->
+          <button class="rp-status-btn" id="rp-term-btn" style="margin-left:2px;">⚡</button>
+
+          <div class="pill session-cost" id="session-cost"></div>
+          <div class="status">
+            <span class="status-indicator" id="status-indicator"></span>
+            <span class="status-text" id="status-text">Connecting...</span>
+          </div>
+          
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div class="messages" id="messages">
+        <div class="welcome">
+          <div class="welcome-icon"><img src="tau-192.png" alt="τ" class="tau-icon-welcome"></div>
+          <p>RP Web · 乐园回响</p>
+          <p class="hint">开启 RP 模式后，副视角和状态面板自动可用</p>
+        </div>
+      </div>
+
+      <button class="scroll-bottom-btn hidden" id="scroll-bottom-btn">↓</button>
+      <div class="typing-indicator hidden" id="typing-indicator"></div>
+
+      <!-- Input -->
+      <div class="input-area">
+        <div class="slash-hints hidden" id="slash-hints">
+          <div class="slash-hint" data-cmd="/status"><span class="slash-cmd">/status</span> 查看角色状态面板</div>
+          <div class="slash-hint" data-cmd="/history "><span class="slash-cmd">/history</span> 查看角色变更历史</div>
+          <div class="slash-hint" data-cmd="/rp"><span class="slash-cmd">/rp</span> RP 系统帮助</div>
+          <div class="slash-hint" data-cmd="/route "><span class="slash-cmd">/route</span> 查看或选择剧情路线</div>
+          <div class="slash-hint" data-cmd="/compact"><span class="slash-cmd">/compact</span> 压缩对话上下文</div>
+          <div class="slash-hint" data-cmd="/tree"><span class="slash-cmd">/tree</span> 分支导航</div>
+        </div>
+        <form id="chat-form">
+          <div class="input-bubble">
+            <textarea id="message-input" placeholder="输入消息，或按 / 查看命令..." rows="2"></textarea>
+          </div>
+          <div class="input-actions">
+            <button type="submit" id="send-btn">➤</button>
+            <button type="button" id="abort-btn" class="hidden">■</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- File Browser removed -->
+  </div>
+
+  <!-- 状态面板弹窗 -->
+  <div class="rp-status-overlay" id="rp-status-overlay">
+    <div class="rp-status-panel">
+      <button class="rp-status-close" id="rp-status-close">✕</button>
+      <div id="rp-status-content">
+        <div style="text-align:center;padding:20px;">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 代码终端面板 -->
+  <div class="rp-term-overlay" id="rp-term-overlay">
+    <div class="rp-term-panel">
+      <button class="rp-term-close" id="rp-term-close">✕</button>
+      <div class="rp-term-title">⚡ 快速命令</div>
+      <div class="rp-term-section-title">状态 / 历史</div>
+      <div class="rp-term-presets">
+        <button class="rp-term-cmd" data-cmd="/status">📊 角色状态</button>
+        <button class="rp-term-cmd" data-cmd="/history">📋 变更历史</button>
+        <button class="rp-term-cmd" data-cmd="/rp">ℹ️ RP帮助</button>
+      </div>
+      <div class="rp-term-section-title">剧情 / 路线</div>
+      <div class="rp-term-presets">
+        <button class="rp-term-cmd" data-cmd="/route">🗺 查看路线</button>
+        <button class="rp-term-cmd" data-cmd="/route 纯爱线">💖 纯爱线</button>
+        <button class="rp-term-cmd" data-cmd="/route 核心线">🔥 核心线</button>
+      </div>
+      <div class="rp-term-section-title">上下文</div>
+      <div class="rp-term-presets">
+        <button class="rp-term-cmd" data-cmd="/compact">🗜 压缩上下文</button>
+        <button class="rp-term-cmd" data-cmd="/tree">🌲 分支管理</button>
+      </div>
+      <div class="rp-term-section-title">自定义命令</div>
+      <textarea id="rp-term-input" rows="2" placeholder="输入命令，如 /rp、/status、/route 纯爱线..."></textarea>
+      <button id="rp-term-send" class="rp-term-send-btn">▶ 执行</button>
+      <div id="rp-term-result" style="margin-top:8px;font-size:12px;color:#7a9bcb;min-height:20px;"></div>
+    </div>
+  </div>
+
+  <!-- 卡片选择器 -->
+  <div class="session-picker-overlay" id="card-picker-overlay">
+    <div class="session-picker-panel">
+      <div class="session-picker-title">
+        🎭 选择角色卡
+        <button style="float:right;background:none;border:none;color:#7a9bcb;font-size:18px;cursor:pointer;padding:0;line-height:1;" onclick="document.getElementById('card-picker-overlay').classList.remove('open')">✕</button>
+      </div>
+      <div class="session-picker-list" id="card-picker-list">
+        <div style="text-align:center;padding:20px;color:#8899bb;">加载中...</div>
+      </div>
+      <div style="font-size:11px;color:#556688;text-align:center;margin-top:8px;">可选择多张卡片同时激活（跨界混搭）</div>
+      <button class="session-picker-new" id="card-picker-confirm">✅ 确认选择</button>
+    </div>
+  </div>
+
+  <!-- 会话选择器 -->
+  <div class="session-picker-overlay" id="session-picker-overlay">
+    <div class="session-picker-panel">
+      <div class="session-picker-title">
+        📜 选择历史会话
+        <button style="float:right;background:none;border:none;color:#7a9bcb;font-size:18px;cursor:pointer;padding:0;line-height:1;" onclick="document.getElementById('session-picker-overlay').classList.remove('open')">✕</button>
+      </div>
+      <div class="session-picker-list" id="session-picker-list">
+        <div style="text-align:center;padding:20px;color:#8899bb;">加载中...</div>
+      </div>
+      <button class="session-picker-new" id="session-picker-new">＋ 开始新会话</button>
+    </div>
+  </div>
+
+  <!-- 代码片段面板 -->
+  <div class="rp-term-overlay" id="snippet-overlay">
+    <div class="rp-term-panel">
+      <button class="rp-term-close" id="snippet-close">✕</button>
+      <div class="rp-term-title">📋 代码片段</div>
+      <div class="rp-term-section-title">点击执行（可编辑）</div>
+      <div id="snippet-presets" class="rp-term-presets">
+        <!-- 动态生成 -->
+      </div>
+      <div class="rp-term-section-title">添加自定义片段</div>
+      <textarea id="snippet-new-label" rows="1" placeholder="标签（如：打招呼）" style="width:100%;background:#0f1828;border:1px solid #1a5276;color:#e0e8f0;padding:6px;font-family:inherit;font-size:12px;margin-bottom:4px;border-radius:4px;"></textarea>
+      <textarea id="snippet-new-code" rows="2" placeholder="代码（如：/route 纯爱线）" style="width:100%;background:#0f1828;border:1px solid #1a5276;color:#e0e8f0;padding:6px;font-family:'Consolas',monospace;font-size:13px;resize:vertical;margin-bottom:8px;border-radius:4px;"></textarea>
+      <button id="snippet-add-btn" class="rp-term-send-btn" style="margin-right:8px;">＋ 添加</button>
+      <button id="snippet-reset-btn" class="rp-term-cmd" style="color:#ff8a80;">🔄 重置为默认</button>
+      <div id="snippet-result" style="margin-top:8px;font-size:12px;color:#7a9bcb;min-height:20px;"></div>
+    </div>
+  </div>
+
+  <!-- Dialog -->
+  <div id="dialog-container" class="hidden"></div>
+
+  <script type="module" src="rp-web-app.js"></script>
+</body>
+</html>
