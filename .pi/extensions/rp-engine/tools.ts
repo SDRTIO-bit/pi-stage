@@ -171,6 +171,9 @@ export function createToolRegistry(
       }
 
       saveState();
+
+      // 写历史记录（走 HistoryWriter 缓冲刷写）
+      // tool_result 事件作为冗余兜底，不依赖 PI 版本是否支持该事件
       for (const r of historyRecords) {
         appendHistory(r);
       }

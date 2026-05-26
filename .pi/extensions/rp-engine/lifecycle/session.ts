@@ -29,6 +29,7 @@ export interface SessionDeps {
   stateDir: { current: string };
   /** @deprecated 单个 worldbook 目录 */
   worldbookDir: { current: string };
+  userTurnCounter: { value: number };
   tavernRunner: TavernRunner;
 }
 
@@ -91,7 +92,9 @@ export async function handleSessionStart(
   await deps.tavernRunner.runInitScripts();
 
   deps.store.setDirectories(deps.stateDir.current);
-  deps.store.loadState(getActiveCardIds());
+  deps.store.setPI(pi);
+  // ⭐ session-first：从 PI session 事件恢复状态，文件缓存仅做加速
+  deps.store.loadFromSession(ctx, getActiveCardIds());
 
   // 按激活卡片设置独立的 session/history 目录
   const cardSessionsRoot = join(deps.stateDir.current, "sessions");
@@ -122,9 +125,6 @@ export async function handleSessionStart(
 
   ensureDir(cardSessionsDir);
   cleanupOldSessions(cardSessionsDir);
-  deps.store.reconstructFromSession(ctx);
-  // 确保顶层世界状态指向当前激活卡片（session 快照可能含旧卡数据）
-  deps.store.syncGlobalWorldState();
 
   ctx.ui.setStatus("rp", ctx.ui.theme.fg("accent", "RP模式"));
 
@@ -135,13 +135,13 @@ export async function handleSessionStart(
 }
 
 /**
- * session_tree: 分支导航时重建状态
+ * session_tree: 分支导航时重建状态 + 压缩上下文
  */
-export function handleSessionTree(
+export async function handleSessionTree(
   _pi: ExtensionAPI,
   ctx: ExtensionContext,
   deps: Pick<SessionDeps, "store">
-): void {
+): Promise<void> {
   deps.store.reconstructFromSession(ctx);
   deps.store.saveState();
 }

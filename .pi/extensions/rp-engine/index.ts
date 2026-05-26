@@ -7,7 +7,7 @@
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_CONFIG, type RPConfig } from "./config";
+import { DEFAULT_CONFIG, loadRPConfig, type RPConfig } from "./config";
 import { StateStore } from "./state-store";
 import { createToolRegistry } from "./tools";
 import { createCommandRegistry } from "./commands";
@@ -26,6 +26,8 @@ import { handleSessionStart, handleSessionTree, handleSessionShutdown } from "./
 import { handleTurnStart, handleTurnEnd } from "./lifecycle/turn";
 import { handleMessageEnd } from "./lifecycle/message";
 import { handleBeforeAgentStart } from "./lifecycle/before-agent";
+import { handleInput } from "./lifecycle/input";
+import { registerToolLifecycle } from "./lifecycle/tool-events";
 
 export default function (pi: ExtensionAPI) {
   // ========== 共享可变状态（包装为 mutable ref 对象，确保引用传递） ==========
@@ -38,6 +40,7 @@ export default function (pi: ExtensionAPI) {
 
   // ========== 初始化子服务 ==========
   const store = new StateStore();
+  store.setPI(pi); // session-first：所有状态变更通过 PI session 事件记录
   const runtime = new RuntimeBridge();
   const authorNote = new AuthorNote();
 
@@ -114,6 +117,20 @@ export default function (pi: ExtensionAPI) {
   pi.on("before_agent_start", (ev: any) =>
     handleBeforeAgentStart(ev, services)
   );
+
+  // ========== input 事件（取代 steer 注入） ==========
+
+  try {
+    pi.on("input", (ev: any, ctx: any) => {
+      handleInput(ev, ctx, services);
+    });
+  } catch {
+    console.warn("[RP] PI 不支持 input 事件，世界书注入需回退到 steer 机制");
+  }
+
+  // ========== 工具生命周期审计 ==========
+
+  registerToolLifecycle(pi, services);
 
   // ========== 工具注册 ==========
 

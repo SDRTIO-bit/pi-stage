@@ -11,6 +11,8 @@ declare module '@earendil-works/pi-coding-agent' {
     off(event: string, handler?: (event: any, ctx?: any) => void): void;
     registerTool(tool: { name: string; label: string; description: string; parameters: any; execute: (...args: any[]) => Promise<any> }): void;
     registerCommand(name: string, cmd: { description: string; handler: (args: string, ctx: any) => Promise<void> }): void;
+    registerShortcut(shortcut: { key: string; description: string; command: string; handler?: () => void }): void;
+    registerFlag(flag: { name: string; description: string; handler: (value: string) => void }): void;
     sendUserMessage(text: string, opts?: { deliverAs?: string }): void;
     appendEntry(type: string, data: any): void;
   }

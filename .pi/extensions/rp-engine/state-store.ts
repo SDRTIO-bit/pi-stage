@@ -1,18 +1,19 @@
 /**
- * RP Engine - 状态存储管理（卡片隔离版 v4）
+ * RP Engine - 状态存储管理（session-first 版 v5）
  *
  * 架构：
- * - 主 .pi/state.json 只存 _meta + activeCards + __runtime__
- * - 每张卡片的运行时角色数据独立存储：卡片目录/runtime_state.json
- * - 卡片模板 state.json 作为只读模板，不受运行时修改影响
- * - /reset 只重置指定卡片
+ * - ⭐ PI session 是状态权威源（通过 pi.appendEntry("rp-state", snapshot) 记录）
+ * - 文件（state.json / runtime_state.json）仅作为启动加速缓存，不保证最新
+ * - 每次 saveState() 自动比较状态变更，写入 session 事件
+ * - loadFromSession(ctx) 优先从 PI session 分支恢复，文件为回退
+ * - 旧格式兼容：data.snapshot（旧）和 data.state（新）均支持
  *
- * v4 → v5 变更：工厂函数 → StateStore class，API 不变。
+ * v4 → v5 变更：文件优先 → session 优先，saveSessionSnapshot 合并入 saveState
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HistoryRecord, CardState } from "./types";
 import { deepClone } from "./utils";
 import { HistoryWriter } from "./persistence/history-writer";
@@ -35,6 +36,13 @@ export class StateStore {
 
   /** 历史记录写入器（缓冲→批量刷写） */
   private historyWriter = new HistoryWriter();
+
+  /** PI API 引用，用于写 session 事件（session-first 架构） */
+  private pi: ExtensionAPI | null = null;
+  /** 上一次保存的状态 JSON（用于变更检测，避免写重复 session 事件） */
+  private lastSaveCheckpoint: string = '';
+  /** session 事件时间戳（重放时定位最新 checkpoint） */
+  private sessionCheckpointTs: number = 0;
 
   // ---- state 写入防抖 ----
   private saveStateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -66,6 +74,11 @@ export class StateStore {
     };
   }
 
+  /** 注入 PI API 引用，开启 session-first 模式 */
+  setPI(pi: ExtensionAPI): void {
+    this.pi = pi;
+  }
+
   private getStatePath(): string {
     return join(this.stateDir, "state.json");
   }
@@ -78,7 +91,57 @@ export class StateStore {
   // 加载
   // ============================================================
 
-  loadState(activeCardIds?: string[]): void {
+  /**
+   * ⭐ 从 session 加载状态（session-first）
+   *
+   * 1. 读文件缓存作为初始状态（快速启动）
+   * 2. 重放 session 事件，以最新全量快照覆盖文件缓存
+   * 3. 文件缓存不再是权威源，session 事件才是
+   */
+  loadFromSession(ctx: ExtensionContext, activeCardIds?: string[]): void {
+    // 第一步：读文件缓存作为初始状态（尽可能快）
+    this.loadFileCache(activeCardIds);
+    this.lastSaveCheckpoint = this.buildCheckpointJson();
+
+    // 第二步：在 session 分支中查找最新状态快照
+    let snapshotCount = 0;
+    for (const entry of ctx.sessionManager.getBranch()) {
+      if (entry.type !== "custom" || entry.customType !== "rp-state") continue;
+      const data = entry.data;
+      if (!data) continue;
+
+      // 兼容新旧格式
+      const snapshotState = data.state || data.snapshot;
+      if (!snapshotState) continue;
+
+      // 用 session 快照覆盖文件缓存（session 是权威源）
+      this.state = { ...snapshotState };
+      if (data.cardRuntimes) {
+        this.cardRuntimes = {};
+        for (const [cid, rt] of Object.entries(data.cardRuntimes as Record<string, any>)) {
+          this.cardRuntimes[cid] = { ...rt };
+        }
+      }
+      this.stateDir = this.state["_stateDir"] || this.stateDir;
+      this.sessionCheckpointTs = data.timestamp || 0;
+      snapshotCount++;
+    }
+
+    if (snapshotCount > 0) {
+      this.rebuildCardStatesView();
+      this.syncGlobalWorldState();
+    }
+
+    // 确保 activeCards 是最新的
+    const ids = activeCardIds || (this.state.activeCards || []);
+    this.state.activeCards = ids;
+
+    // 同步 checkpoint 防止下一轮 saveState 重复写相同快照
+    this.lastSaveCheckpoint = this.buildCheckpointJson();
+  }
+
+  /** 从文件缓存加载状态（快速启动辅助，不保证最新） */
+  private loadFileCache(activeCardIds?: string[]): void {
     const p = this.getStatePath();
 
     if (existsSync(p)) {
@@ -219,6 +282,44 @@ export class StateStore {
     if (this.saveStateTimer) { clearTimeout(this.saveStateTimer); this.saveStateTimer = null; }
   }
 
+  /** 构建可比较的 checkpoint JSON，用于 session 事件变更检测 */
+  private buildCheckpointJson(): string {
+    try {
+      return JSON.stringify({
+        activeCards: this.state.activeCards,
+        cardRuntimes: this.cardRuntimes,
+        _meta: this.state._meta,
+        __runtime__: this.state.__runtime__,
+      });
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 将当前状态快照写入 PI session 事件（session-first 核心）
+   * 只有状态实际变更时才写入，避免重复事件
+   */
+  private flushSessionCheckpoint(): void {
+    if (!this.pi) return;
+
+    this.rebuildCardStatesView();
+
+    const currentJson = this.buildCheckpointJson();
+    if (currentJson && currentJson === this.lastSaveCheckpoint) return;
+
+    try {
+      this.pi.appendEntry("rp-state", {
+        state: deepClone(this.state),
+        cardRuntimes: deepClone(this.cardRuntimes),
+        timestamp: Date.now(),
+      });
+      this.lastSaveCheckpoint = currentJson;
+    } catch (e) {
+      console.warn("[RP] session 事件写入失败:", (e as Error).message);
+    }
+  }
+
   private saveStateNow(): void {
     // 防御：stateDir 尚未初始化时不写入（turn_end 可能早于 session_start 触发）
     if (!this.stateDir) return;
@@ -251,7 +352,13 @@ export class StateStore {
     this.pendingSave = false;
   }
 
+  /** 保存状态：先写 session 事件（权威源），再写文件缓存（加速启动） */
   saveState(immediate = false): void {
+    // ① session 事件（权威源）：状态变更时同步写入 PI session
+    // 文件系统可能损坏，但 session append 是原子的
+    this.flushSessionCheckpoint();
+
+    // ② 文件缓存（加速启动用）：防抖写入，非关键路径
     if (immediate) {
       if (this.saveStateTimer) { clearTimeout(this.saveStateTimer); this.saveStateTimer = null; }
       this.saveStateNow();
@@ -266,7 +373,11 @@ export class StateStore {
     }
   }
 
+  /** 刷写所有待处理数据：session 事件 → 文件缓存 → 历史记录 */
   flushAll(): void {
+    // session 事件（先于文件刷写，确保状态已记录）
+    this.flushSessionCheckpoint();
+
     this.clearTimers();
     if (this.pendingSave) this.saveStateNow();
     this.historyWriter.flushNow();
@@ -318,6 +429,8 @@ export class StateStore {
     } else {
       Object.assign(runtime.characters[charName], updates);
     }
+    // 触发 session 事件 + 文件缓存
+    this.saveState();
     return true;
   }
 
@@ -363,8 +476,8 @@ export class StateStore {
         },
       };
 
-      const runtimePath = getCardRuntimePath(this.stateDir, cardId);
-      writeFileSync(runtimePath, JSON.stringify(this.cardRuntimes[cardId], null, 2), "utf-8");
+      // 写入 session 事件 + 文件缓存
+      this.saveState(true);
       return count;
     } catch {
       return 0;
@@ -372,43 +485,17 @@ export class StateStore {
   }
 
   // ============================================================
-  // Session 快照
+  // Session 恢复（从 PI session 事件重放状态）
   // ============================================================
 
-  saveSessionSnapshot(pi: any): void {
-    try {
-      this.rebuildCardStatesView();
-      pi.appendEntry("rp-state", {
-        snapshot: deepClone(this.state),
-        cardRuntimes: deepClone(this.cardRuntimes),
-        timestamp: Date.now(),
-      });
-    } catch {}
-  }
-
+  /**
+   * 从会话分支中恢复状态（调用 session_tree 时使用）
+   * session-first：直接从 session 事件重建，文件缓存仅做速度优化
+   */
   reconstructFromSession(ctx: ExtensionContext): void {
-    let latestSnapshot: any = null;
-    for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type === "custom" && entry.customType === "rp-state") {
-        latestSnapshot = entry.data?.snapshot;
-      }
-    }
-    if (!latestSnapshot) return;
+    this.loadFromSession(ctx, this.state.activeCards as string[] | undefined);
 
-    // 只恢复 __runtime__ 等运行时元信息，不恢复卡数据
-    const runtimeOnly: Record<string, any> = {
-      __runtime__: latestSnapshot.__runtime__,
-      activeCards: this.state.activeCards || latestSnapshot.activeCards || [],
-    };
-    this.state = { ...this.state, ...runtimeOnly };
-
-    // 从磁盘重新加载当前卡片的运行时数据（防止旧卡数据污染）
-    const activeIds: string[] = this.state.activeCards || [];
-    this.cardRuntimes = {};
-    for (const cardId of activeIds) {
-      this.loadCardRuntime(cardId);
-    }
-    this.rebuildCardStatesView();
-    this.syncGlobalWorldState();
+    // 恢复后也同步一次文件缓存
+    this.saveState(true);
   }
 }

@@ -15,7 +15,7 @@ import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { RuntimeBridge } from "../runtime-integration";
 import { getActiveCards, getCardWorldbookDirs } from "../card-manager";
-import { readWorldbookIndexMulti, getAllConstantEntries } from "../worldbook";
+import { readWorldbookIndexMulti, estimateTokens, getAllConstantEntries } from "../worldbook";
 
 export interface BeforeAgentDeps {
   store: import("../state-store").StateStore;
@@ -24,6 +24,7 @@ export interface BeforeAgentDeps {
   worldbookDir: { current: string };
   userTurnCounter: { value: number };
   stateDir: { current: string };
+  tavernRunner: import("../tavern-runner").TavernRunner;
 }
 
 // ============================================================
@@ -34,6 +35,9 @@ let _cachedProjectReport: string | null = null;
 let _cachedWorldbookIndex: string | null = null;
 let _cachedStablePrefix: string | null = null;
 let _cachedConstantContent: string | null = null;
+
+/** turn_start 预执行的 tavern 脚本输出缓存，供 before_agent_start 消费 */
+let _pendingTavernMessages: string[] | null = null;
 
 /**
  * 构建项目报告
@@ -133,20 +137,42 @@ export function resetProjectReportCache(): void {
   _cachedWorldbookIndex = null;
   _cachedStablePrefix = null;
   _cachedConstantContent = null;
+  _pendingTavernMessages = null;
+}
+
+/** 设置 tavern 脚本消息缓存（由 turn_start 在 input 事件后调用） */
+export function setPendingTavernMessages(messages: string[] | null): void {
+  _pendingTavernMessages = messages;
 }
 
 /**
  * 获取世界书索引缓存（session 级别，只生成一次）
+ * 带 token 预算控制（硬上限 12000 tokens，与 worldbook.ts 的 MAX_WORLDBOOK_TOKENS 一致）
  */
 function getCachedWorldbookIndex(worldbookDirs: string[]): string {
   if (_cachedWorldbookIndex) return _cachedWorldbookIndex;
-  _cachedWorldbookIndex = readWorldbookIndexMulti(worldbookDirs);
+
+  const raw = readWorldbookIndexMulti(worldbookDirs);
+  if (!raw) { _cachedWorldbookIndex = ""; return ""; }
+
+  const tokens = estimateTokens(raw);
+  if (tokens <= 12000) {
+    _cachedWorldbookIndex = raw;
+    return raw;
+  }
+
+  // 超出预算时截断
+  const ratio = 12000 / tokens;
+  const targetChars = Math.floor(raw.length * ratio);
+  const truncated = raw.slice(0, targetChars);
+  const lastNewline = truncated.lastIndexOf("\n\n");
+  const cutPoint = lastNewline > 0 ? lastNewline : targetChars;
+  _cachedWorldbookIndex = truncated.slice(0, cutPoint) + "\n\n(世界书索引已截断，超 token 预算)";
   return _cachedWorldbookIndex;
 }
 
 /**
  * 一次性读取全部常开世界书内容（session 级别缓存）
- * 替代游标轮换，全部注入 system prompt 以保证缓存命中
  */
 function getCachedConstantContent(worldbookDirs: string[]): string {
   if (_cachedConstantContent) return _cachedConstantContent;
@@ -174,7 +200,7 @@ function getCachedConstantContent(worldbookDirs: string[]): string {
 
 /**
  * 获取稳定前缀缓存（session 级别，只生成一次）
- * 包含：规则 + 世界书索引 + 全部常开设定 → system prompt 完全固定，prompt cache 100% 命中
+ * 包含：规则 + 世界书索引 + 全量常开设定
  */
 function getStablePrefix(worldbookDirs: string[]): string {
   if (_cachedStablePrefix) return _cachedStablePrefix;
@@ -234,7 +260,6 @@ function getStablePrefix(worldbookDirs: string[]): string {
 
 ## 世界书快速索引
 ${indexText || "（无世界书索引）"}
-
 ${constantContent}
 `;
 
@@ -300,9 +325,11 @@ export function handleBeforeAgentStart(
 - 📅 ${world.当前日期 || "?"} ${world.当前星期 || ""} 🕐 ${world.当前时间 || ""} 📍 ${world.当前位置 || ""}
 `);
 
-  // 注意：世界书注入 / 注意力刷新 / 状态同步等动态内容
-  // 已迁移到 turn.ts 中通过 pi.sendUserMessage({ deliverAs: "steer" }) 注入
-  // 不再出现在 system prompt 中，以保证 system prompt 完全固定
+  // tavern 脚本系统消息（由 turn_start 预执行并缓存）
+  if (_pendingTavernMessages && _pendingTavernMessages.length > 0) {
+    dynamicParts.push(_pendingTavernMessages.join("\n\n"));
+    _pendingTavernMessages = null; // 一次性消费
+  }
 
   // 每 20 轮刷新项目报告
   if (deps.userTurnCounter.value > 0 && deps.userTurnCounter.value % 20 === 0) {
