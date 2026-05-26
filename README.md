@@ -299,7 +299,7 @@ node setup.mjs --scan
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `RP_WEB_PORT` | `3012` | Web 前端端口 |
-| `RP_WEB_HOST` | `127.0.0.1` | 监听地址（局域网改 `0.0.0.0`） |
+| `RP_WEB_HOST` | `127.0.0.1` | 监听地址 |
 | `RP_AUTHOR_NOTE` | — | Author Note 注入文本 |
 
 ---

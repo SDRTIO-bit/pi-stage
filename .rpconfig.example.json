@@ -9,11 +9,11 @@
   "model_max_tokens": 128000,
   "context_mode": "auto",
   "rp_web_port": 3012,
-  "rp_web_host": "0.0.0.0",
+  "rp_web_host": "127.0.0.1",
   "agent_api": {
     "enabled": false,
     "port": 3013,
-    "host": "0.0.0.0",
+    "host": "127.0.0.1",
     "api_key": "",
     "permission": "dialogue"
   }
