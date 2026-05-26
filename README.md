@@ -31,6 +31,10 @@ RP Engine 是一个运行在 pi coding agent 之上的**通用角色扮演引擎
 | **卡片 UI 组件** | AI 本地化产物放入 `ui/` 目录，引擎自动扫描下发给前端 |
 | **世界书注入** | 关键词匹配 + Token 预算 1500 + 去重 + 优先级排序 |
 | **用户轮数计数** | 基于 turn_end 精确统计用户交互次数，避免 steer 消息污染轮数 |
+| **Session-first 架构** | PI session 事件(appendEntry)是状态权威源，文件降级为缓存 |
+| **input 事件** | PI 原生 input 事件拦截用户消息，替代 steer 注入，零额外 token 开销 |
+| **工具生命周期** | PI tool_call/tool_result 事件实现参数校验与审计 |
+| **常开世界书注入** | 全量注入 system prompt，session 内缓存，AI 首轮即持有完整设定 |
 | **state.json 只读模板** | 卡片模板永不被覆盖，动态数据通过 session 快照持久化 |
 | **APPEND_SYSTEM 前端附加** | 格式规范拼到用户消息末尾发送，利用 AI 末尾注意力最高特性 |
 | **AI Cognitive Runtime Engine (Phase 3)** | 39 文件 / 12,622 行的完整运行时体系 |
@@ -202,7 +206,7 @@ node setup.mjs --scan
 ├── .pi/
 │   ├── settings.json               # pi 设置
 │   ├── APPEND_SYSTEM.md            # 常驻风格规范（前端附加）
-│   ├── state.json                  # 运行时状态（由 session 快照重建）
+│   ├── state.json                  # 运行时状态缓存（session 事件是权威源）
 │   ├── state_history.jsonl         # 状态变更历史
 │   ├── sessions/                   # 对话记录（按卡片隔离）
 │   ├── cards/                      # 📇 角色卡仓库
@@ -213,7 +217,7 @@ node setup.mjs --scan
 │   │   ├── rp-engine/              # 🔧 引擎模块
 │   │   │   ├── index.ts              # 入口 + 事件注册
 │   │   │   ├── tavern-runner.ts      # SillyTavern JS 兼容层
-│   │   │   ├── lifecycle/            # session/turn/message/before-agent
+│   │   │   ├── lifecycle/            # 事件处理: session/turn/input/tool/before-agent/message
 │   │   │   ├── utils/                # json-patch / vector-search / session-cleanup
 │   │   │   └── ...
 │   │   └── rp-web/                 # 🌐 前端界面
@@ -245,28 +249,29 @@ node setup.mjs --scan
 | 生理状态 | 动态 | 生理期、安全期、怀孕状态追踪 |
 | 特殊事件 | 布尔 | 花开蒂落、告白、结婚等里程碑标记 |
 
-### AI 工具（4 个）
+### AI 工具（5 个）
 
 | 工具 | 功能 |
 |------|------|
 | `read_state` | 读取角色当前状态 |
 | `update_state` | 更新归属值/背德值/欲望值/内心想法等 |
 | `advance_time` | 推进游戏天数 |
-| `load_worldbook` | 按关键词加载世界书条目 |
+| `load_worldbook` | 按关键词搜索世界书条目 |
+| `load_constant_worldbook` | 按编号顺序读取常开世界书设定 |
 
-### state.json 只读模板机制
+### Session-first 状态架构
 
 - `cards/<卡名>/state.json` 是**只读模板**，存储角色初始设定
-- 运行时动态数据通过 session 历史中的 `rp-state` 快照持久化
-- `saveState()` 不再写回卡片目录，保护模板不被污染
-- `loadState()` 启动时从卡片模板加载初始值
+- **PI session 事件是状态权威源**：每次 `saveState()` 先通过 `pi.appendEntry("rp-state", snapshot)` 写入 session
+- 文件缓存(`state.json` / `runtime_state.json`)仅加速启动，不保证最新
+- session 恢复时 `loadFromSession()` 优先重放 session 事件快照，文件为回退
 - **`/reset` 命令**：从卡片模板重建，一键重置所有数值
 
 ### 上下文管理
 
 | 机制 | 说明 |
 |------|------|
-| **对话压缩** | 每 15 次用户交互强制压缩（AI 回复后触发，用户无感知） |
+| **对话压缩** | PI 自动管理压缩时机，无需手动触发 |
 | **世界书注入** | 每 3 次用户交互关键词匹配注入（前端不可见） |
 | **APPEND_SYSTEM 附加** | 每 5 次用户输入自动拼格式规范到消息末尾 |
 | **用户轮数计数** | 基于 `turn_end` 精确计数，不受 steer 污染 |
