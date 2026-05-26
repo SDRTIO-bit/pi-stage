@@ -39,7 +39,7 @@ export const DEFAULT_CONFIG: RPConfig = {
   },
   model_max_tokens: 128000,
   rp_web_port: 3012,
-  rp_web_host: "0.0.0.0",
+  rp_web_host: "localhost",
 };
 
 /**
