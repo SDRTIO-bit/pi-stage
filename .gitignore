@@ -46,5 +46,19 @@ desktop.ini
 # --- Claude 记忆 ---
 .Claude/
 
+# --- IDE/编辑器 ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
 # --- 临时文件 ---
 *.tmp
+tmp/
+temp/
+nul
+tau-mirror-tmp/
+
+# --- 打包文件 ---
+*.tgz
