@@ -16,6 +16,7 @@ import { join } from "node:path";
 import type { RuntimeBridge } from "../runtime-integration";
 import { getActiveCards, getCardWorldbookDirs } from "../card-manager";
 import { readWorldbookIndexMulti, estimateTokens, getAllConstantEntries } from "../worldbook";
+import { consumeAgentBrief } from "./turn";
 
 export interface BeforeAgentDeps {
   store: import("../state-store").StateStore;
@@ -25,6 +26,9 @@ export interface BeforeAgentDeps {
   userTurnCounter: { value: number };
   stateDir: { current: string };
   tavernRunner: import("../tavern-runner").TavernRunner;
+  memoryStore?: import("../prototypes/memory-store").MemoryStore;
+  sceneScheduler?: import("../prototypes/scene-scheduler").SceneScheduler;
+  characterRegistry?: import("../prototypes/character-registry").CharacterRegistry;
 }
 
 // ============================================================
@@ -216,10 +220,15 @@ function getStablePrefix(worldbookDirs: string[]): string {
 - 所有角色只能基于已知事件行动（绝对信息隔离）
 - 对 {{user}}：可写外在行为，禁止写内心/替代/大段对话
 
-### 输出格式
-- <content> 正文 800-1200 字
-- 结尾必须包含 3-5 个 <choice> 选项（0-30 字）
-- 第三人称有限视角
+### 叙事质量要求
+你的回复必须同时包含以下 4 个维度，并将它们自然融入叙事，不使用任何标记符号：
+
+1. **心理活动** — 角色的内心想法、未说出口的感受，通过行文自然流露
+2. **身体语言** — 具体的微表情和肢体动作，拒绝"她很伤心"这类抽象概括
+3. **环境映射** — 环境描写必须与角色当前情绪形成映射，用环境"演"情绪
+4. **对话** — 符合人物性格，使用引号包裹
+
+以上 4 个维度应当像盐溶于水一样融入叙事，而非被标签分隔。
 
 ### 文风要求：对话驱动型（对话占比 70%）
 - **对话占比**：正文中，对话段落（含人物台词及伴随的细微动作/表情）应明显多于叙述段落。避免大段的心理描写或环境铺陈，信息尽量通过对话传递。
@@ -267,10 +276,11 @@ ${constantContent}
 }
 
 /**
- * before_agent_start: 注入系统提示 + 开场指令
+ * before_agent_start: 注入纯静态系统提示
  *
- * ★ 缓存优化：稳定前缀（规则+世界书索引）每轮不变 → prompt cache 命中
- *    动态后缀（状态、注入内容）每轮变化，放在最后减小影响
+ * ★ 缓存策略：system prompt 全部为静态内容（规则+世界书），session 内哈希不变，
+ *    LLM 提供商缓存 100% 命中，每轮只传对话历史和新消息的 token。
+ *    动态内容（状态、记忆检索、场景）改走 input 事件拼入用户消息。
  */
 export function handleBeforeAgentStart(
   event: any,
@@ -283,14 +293,14 @@ export function handleBeforeAgentStart(
 
   // 规则 + 世界书索引，session 内只生成一次
   const cachePrefix = getStablePrefix(worldbookDirs);
-  const projectCwd = deps.stateDir?.current ? join(deps.stateDir.current, "..") : "";
 
-  // ==================== 动态后缀（每轮变化） ====================
+  // ==================== 仅首轮附加内容 ====================
 
   const dynamicParts: string[] = [];
 
   // 首轮：项目报告 + 开场指令（仅首轮，后续靠对话历史）
   if (isFirstTurn) {
+    const projectCwd = deps.stateDir?.current ? join(deps.stateDir.current, "..") : "";
     const projectReport = buildProjectReport(projectCwd, deps);
     const activeCards = getActiveCards();
     let startPrompt = "";
@@ -317,30 +327,19 @@ export function handleBeforeAgentStart(
     dynamicParts.push(projectReport + startPrompt);
   }
 
-  // 角色状态（每轮刷新）
-  const state = deps.store.getState();
-  const world: any = (state.global?.["世界"]) || state["世界"] || {};
-  dynamicParts.push(`
-## 当前状态
-- 📅 ${world.当前日期 || "?"} ${world.当前星期 || ""} 🕐 ${world.当前时间 || ""} 📍 ${world.当前位置 || ""}
-`);
-
   // tavern 脚本系统消息（由 turn_start 预执行并缓存）
   if (_pendingTavernMessages && _pendingTavernMessages.length > 0) {
     dynamicParts.push(_pendingTavernMessages.join("\n\n"));
     _pendingTavernMessages = null; // 一次性消费
   }
 
-  // 每 20 轮刷新项目报告
-  if (deps.userTurnCounter.value > 0 && deps.userTurnCounter.value % 20 === 0) {
-    _cachedProjectReport = null;
-    const freshReport = buildProjectReport(projectCwd, deps);
-    dynamicParts.push("\n[项目状态刷新]\n" + freshReport);
+  // ⭐ 角色 Agent 简报
+  const agentBrief = consumeAgentBrief();
+  if (agentBrief) {
+    dynamicParts.push(agentBrief);
   }
 
-  const dynamicSuffix = dynamicParts.join("\n");
-
   return {
-    systemPrompt: event.systemPrompt + cachePrefix + dynamicSuffix,
+    systemPrompt: event.systemPrompt + cachePrefix + dynamicParts.join("\n"),
   };
 }

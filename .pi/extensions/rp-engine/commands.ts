@@ -29,7 +29,9 @@ export function createCommandRegistry(
   saveState: () => void,
   getHistoryPath: () => string,
   stateDir?: string,  // 卡片模板读取用
-  resetCardFromTemplate?: (cardId: string) => number  // 卡片隔离重置
+  resetCardFromTemplate?: (cardId: string) => number,  // 卡片隔离重置
+  getMemoryStore?: () => import("./prototypes/memory-store").MemoryStore | undefined,
+  getSceneScheduler?: () => import("./prototypes/scene-scheduler").SceneScheduler | undefined
 ): CommandRegistry {
   const registry = new CommandRegistry();
 
@@ -73,14 +75,14 @@ export function createCommandRegistry(
   });
 
   // --------------------------------------------------
-  // /rp - 帮助
+  // /rp - 帮助 + 引擎调试信息
   // --------------------------------------------------
   registry.register({
     name: "rp",
     description: "显示角色扮演系统帮助",
     handler: async (_args, ctx) => {
       const help = `
-╔══ 角色扮演系统帮助 ══╗
+╔══ 角色扮演系统 ══╗
 
 工具（供 AI 调用）:
   read_state               - 读取角色状态
@@ -97,11 +99,12 @@ export function createCommandRegistry(
   /card activate <id>      - 激活卡片
   /card deactivate <id>    - 取消激活
   /reset [卡片id]          - 重置角色数值
+  /diag                    - 引擎内部状态诊断
   /rp                      - 本帮助
 
 快速开始:
-  1. /import C:\\路径\\角色卡.png   — 导入角色卡
-  2. /card list                     — 确认卡片已注册
+  1. /card import C:\\路径\\角色卡.png   — 导入角色卡
+  2. /card list                          — 确认卡片已注册
   3. 开始对话，AI 将自动读取角色设定并推进剧情
 `;
 
@@ -286,6 +289,63 @@ export function createCommandRegistry(
       saveState();
       const targetLabel = targetIds.length === 1 ? targetIds[0] : `${targetIds.length} 张卡片`;
       ctx.ui.notify(`✅ 已从模板重置 ${targetLabel}，共 ${totalResetCount} 个角色`, "success");
+    },
+  });
+
+  // --------------------------------------------------
+  // /diag - 引擎内部状态诊断
+  // --------------------------------------------------
+  registry.register({
+    name: "diag",
+    description: "显示 MemoryStore / SceneScheduler 等引擎内部状态",
+    handler: async (_args, ctx) => {
+      try {
+        const ms = getMemoryStore?.();
+        const ss = getSceneScheduler?.();
+        const lines: string[] = [];
+        lines.push("RP Engine Debug Info");
+        lines.push("====================");
+
+        lines.push("\n[MemoryStore]");
+        if (ms) {
+          lines.push("  initialized: " + ms.initialized);
+          lines.push("  cardId: " + (ms.cardId || "(none)"));
+          try {
+            const snap = ms.saveSnapshot() as Record<string, any>;
+            for (const layer of ["global", "event", "summary", "archive"]) {
+              const chunks = (snap[layer] as any[]) || [];
+              const entryCount = chunks.reduce((sum: number, c: any) => sum + (c.entries?.length || 0), 0);
+              const chunkCount = chunks.length;
+              lines.push("  " + layer + ": " + entryCount + " entries / " + chunkCount + " chunks");
+            }
+          } catch (e) {
+            lines.push("  (snapshot error: " + (e as Error).message + ")");
+          }
+        } else {
+          lines.push("  (not enabled - set features.memoryStore = true)");
+        }
+
+        lines.push("\n[SceneScheduler]");
+        if (ss) {
+          const cur = ss.getCurrentScene();
+          const allScenes = ss.getAllScenes();
+          if (cur) {
+            lines.push("  current scene: " + cur.name + " (id: " + cur.id + ")");
+            lines.push("  active chars: " + ((cur.activeCharacters || []).join(", ") || "(none)"));
+            lines.push("  turns: " + cur.turnCount + "/" + cur.maxTurns);
+          } else {
+            lines.push("  no active scene");
+          }
+          lines.push("  total scenes: " + allScenes.length);
+        } else {
+          lines.push("  (not enabled - set features.sceneScheduler = true)");
+        }
+
+        ctx.ui.notify(lines.join("\n"), "info");
+      } catch (e) {
+        ctx.ui.notify("/debug error: " + (e as Error).message, "error");
+        console.error("[RP] /debug error:", e);
+      }
     },
   });
 

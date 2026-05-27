@@ -7,6 +7,7 @@
   <br/><br/>
   <img src="https://img.shields.io/badge/pi-v0.75%2B-blue" alt="pi">
   <img src="https://img.shields.io/badge/node-%3E%3D18-green" alt="node">
+  <img src="https://img.shields.io/badge/version-v3-red" alt="v3">
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="license">
 </p>
 
@@ -18,147 +19,88 @@
 
 RP Engine 是一个运行在 pi coding agent 之上的**通用角色扮演引擎**。不绑定特定世界观——你可以导入任意 SillyTavern 格式的角色卡来扮演。
 
-### 核心特性
+---
+
+## 🎯 核心架构：双 Agent 叙事引擎
+
+RP Engine v3 的核心是一套**双 Agent 协同时序架构**，将"世界推演"与"叙事生成"分离为两个独立层，通过延迟一轮的舞台指示机制协作：
+
+```
+  turn_end                             下一轮 input                        下一轮 agent
+     │                                      │                                  │
+     ▼                                      ▼                                  ▼
+┌─────────────┐                    ┌──────────────┐                  ┌──────────────────┐
+│  World Agent │── 并行 4 路 ──→   │  input.ts     │── 拼入 ──→      │ Narrative Agent  │
+│  (规则驱动)   │  事件生成          │  上下文舞台指示  │  用户消息前缀     │  (LLM 驱动)       │
+│              │ 场景转折检测        │               │                  │  生成叙事内容      │
+│              │ round_summary      │  状态摘要      │                  │  角色对话          │
+│              │                    │  世界动态      │                  │  场景描写          │
+│              │                    │  记忆检索      │                  │  情感表达          │
+└──────┬───────┘                    └──────────────┘                  └──────────────────┘
+       │                                      ▲
+       │    ┌──────────────────┐              │
+       └───→│  SceneScheduler  │── 场景名 ────┘
+            │  ("导演")         │  切换冷却
+            │  地点提取          │  情感阶段
+            └──────────────────┘
+```
+
+### 三个角色
+
+| 角色 | 实现 | 驱动方式 | 职责 |
+|------|------|----------|------|
+| **World Agent** | `prototypes/world-agent.ts` | 规则驱动（4 路并行） | 每轮推演环境/剧情/角色事件，检测场景转折，生成 round_summary |
+| **SceneScheduler** | `prototypes/scene-scheduler.ts` | 规则驱动 | 场景生命周期管理，40+ 地点词 + 15 情感阶段自动命名，强制 3 轮切换冷却 |
+| **Narrative Agent** | pi agent 主模型（LLM） | LLM 驱动 | 消费舞台指示，生成隐式融合 4 维度叙事（心理/身体/环境/对话） |
+
+### 时序
+
+1. **第 N 轮 turn_end** → World Agent 并行推演，事件存入 MemoryStore，场景转折检测结果写入
+2. **第 N+1 轮 input** → input.ts 读取 MemoryStore + SceneScheduler，拼装舞台指示到用户消息前
+3. **第 N+1 轮 agent** → Narrative Agent（AI 模型）感知舞台指示，生成包含 4 维度的叙事回复
+
+这种"延迟一轮"的设计保证了 World Agent 的事件总在下一轮被 AI 感知，推演不会干扰当前轮的对话流。同时 World Agent 为纯规则驱动，零 LLM 调用开销。
+
+---
+
+### v3 核心特性
 
 | 特性 | 说明 |
 |------|------|
 | **多卡片并发** | 同时激活多张角色卡，支持跨世界融合叙事 |
 | **SillyTavern 兼容** | 支持 V2/V3 PNG 角色卡和 JSON 导出格式导入 |
-| **导入自动预处理** | 正则→渲染钩子、酒馆→变量定义、远程 URL 扫描、待办生成 |
+| **隐式融合写作** | 4 维度叙事（心理/身体/环境/对话）自然融入行文，无标记符号 |
+| **场景调度器** | 规则驱动的场景生命周期管理，40+ 地点词 + 15 情感阶段自动命名 |
+| **World Agent** | 每轮并行推演：事件生成 + 场景转折检测 + round_summary 持久化 |
+| **MemoryStore** | 3 层记忆架构（event / summary / global），自动检索与持久化 |
+| **上下文舞台指示** | input 事件在用户消息前拼入状态摘要 + 世界动态 + 场景上下文 |
 | **卡片完全隔离** | 状态、世界书、正则脚本、session 历史均按卡片独立 |
 | **动态变量系统** | Zod Schema 提取 → 类型校验 → 值域钳制 → state.json 持久化 |
 | **正则全链路** | 引擎层 prompt 剥离 + 前端 display 替换，WebSocket 下发 |
-| **卡片 UI 组件** | AI 本地化产物放入 `ui/` 目录，引擎自动扫描下发给前端 |
-| **世界书注入** | 关键词匹配 + Token 预算 1500 + 去重 + 优先级排序 |
-| **用户轮数计数** | 基于 turn_end 精确统计用户交互次数，避免 steer 消息污染轮数 |
-| **Session-first 架构** | PI session 事件(appendEntry)是状态权威源，文件降级为缓存 |
-| **input 事件** | PI 原生 input 事件拦截用户消息，替代 steer 注入，零额外 token 开销 |
-| **工具生命周期** | PI tool_call/tool_result 事件实现参数校验与审计 |
-| **常开世界书注入** | 全量注入 system prompt，session 内缓存，AI 首轮即持有完整设定 |
+| **世界书注入** | 关键词匹配 + Token 预算 1500 + 去重 + 优先级排序，每 3 轮触发 |
+| **场景切换冷却** | 规则路径 + 调度器路径均强制 3 轮冷却，避免频繁切景 |
 | **state.json 只读模板** | 卡片模板永不被覆盖，动态数据通过 session 快照持久化 |
-| **APPEND_SYSTEM 前端附加** | 格式规范拼到用户消息末尾发送，利用 AI 末尾注意力最高特性 |
-| **AI Cognitive Runtime Engine (Phase 3)** | 39 文件 / 12,622 行的完整运行时体系 |
-| **Context Assembly Engine** | 6 阶段装配管道：collect→prioritize→compress→assemble→reinforce→render |
-| **Attention Runtime** | 7 层注意力管理 + Token 预算 + 显著性计算 + 上下文衰减 + 指令强化 |
-| **Autonomous Runtime** | 世界持续运行：时间推进、Agent 自主行为、事件触发、后台更新 |
-| **Agent 子系统** | 需求系统、情绪演算、日程表、意图生成、Agent 运行时 |
-| **DebugDashboard** | 5 类追踪器：runtime/scheduler/agent/memory/attention 全链路可观测 |
-| **Runtime Persistence** | 自动保存/恢复、循环覆盖、快照格式化 |
-| **Runtime Evaluation System (Phase 3.5)** | 5 模块 / 2,200 行的评估与遥测体系 |
-| **DriftDetector** | 4 种漂移检测：角色/风格/指令/格式，滑动平均+告警 |
-| **MemoryEvaluator** | 4 项记忆质量指标：精度/相关性/幻觉率/持久性 |
-| **AttentionEvaluator** | 4 项注意力指标：Token分配/强化/饱和度/指令保持 |
-| **RuntimeTelemetry** | 6 类遥测事件 + 时间点快照 + 时间轴回放 |
-| **BenchmarkRunner** | 6 个 Benchmark 场景，Legacy vs Runtime 对比分析 |
+| **用户轮数计数** | 基于 turn_end 精确统计用户交互次数，不受 steer 污染 |
 
 ---
 
-## 🚀 新手教程（5 分钟上手）
-
-### 准备工作
-- **Node.js 18+** — 没装的话去 [nodejs.org](https://nodejs.org/) 下载安装
-- **pi coding agent** — 终端运行 `npm install -g @earendil-works/pi-coding-agent`
-- **一张角色卡** — SillyTavern 格式的 .png 或 .json 角色卡（去社区找或者自己制作）
-
----
-
-### 第一步：部署项目
-
-**方式一：一键部署（推荐）**
-双击根目录的 **`项目部署.bat`**，自动完成：
-```
-✔ 检查 Node.js → 安装依赖 → 安装 pi agent
-```
-
-**方式二：手动部署**
-```bash
-npm install                     # 安装项目依赖
-npm install -g @earendil-works/pi-coding-agent  # 安装 pi agent
-```
-
----
-
-### 第二步：导入角色卡
-
-拿到一张 .png 角色卡后，导入到引擎：
-
-**方式一：拖拽导入（推荐）**
-把 .png 文件拖到 **`ImportCharacterCard.bat`** 上松手即可。
-
-**方式二：命令行导入**
-```bash
-node setup.mjs --import 角色卡.png
-```
-
-导入完成后，终端会显示卡片信息和世界书条目数。想确认有哪些卡片：
-```bash
-# 启动 pi 后输入：
-/card list
-```
-
----
-
-### 第三步：启动引擎
+## 🚀 快速开始
 
 ```bash
+# 1. 进入项目
+cd your-project
+
+# 2. 安装依赖
+npm install
+
+# 3. 导入角色卡（SillyTavern PNG/JSON）
+node setup.mjs --character path/to/character.png
+
+# 4. 启动 pi
 pi
+
+# 5. 浏览器打开 http://localhost:3012
 ```
-
-首次启动会加载引擎，看到 `RP模式` 提示表示成功。
-
----
-
-### 第四步：开始角色扮演
-
-在 pi 中输入以下命令激活你的角色卡：
-
-```
-/card activate <卡片id>
-```
-（卡片 id 在导入时终端有显示，也可以用 `/card list` 查看）
-
-激活后就可以直接对话了！AI 会自动读取角色设定和世界书开始扮演。
-
-> **提示**：首次进入新场景时，AI 会先调用 `load_constant_worldbook` 读取世界观设定，耐心等几轮就好。
-
----
-
-### 第五步：打开 Web 界面（可选）
-
-浏览器打开 **http://localhost:3012**，可以看到：
-- 实时对话界面
-- 角色状态面板
-- 历史会话管理
-- 世界书条目浏览
-
----
-
-### 常用命令速查
-
-| 命令 | 作用 |
-|------|------|
-| `/card list` | 查看所有已导入的卡片 |
-| `/card activate <id>` | 激活卡片，开始扮演 |
-| `/card deactivate <id>` | 休眠卡片 |
-| `/reset` | 重置角色数值到初始状态 |
-| `/status` | 查看所有角色当前状态 |
-| `/rp` | 查看帮助 |
-
----
-
-### 常见问题
-
-**Q: 提示 "pi 命令不存在"**
-A: 确认已执行 `npm install -g @earendil-works/pi-coding-agent`，然后重启终端。
-
-**Q: 导入卡片时报错**
-A: 确保角色卡是 SillyTavern V2/V3 格式的 .png 或导出的 .json 文件。
-
-**Q: 怎么切换角色卡？**
-A: `/card deactivate <当前id>` 取消激活，再 `/card activate <新id>` 激活新卡，然后重启 pi。
-
-**Q: Web 界面打不开**
-A: 确认 pi 正在运行，浏览器访问 http://localhost:3012
 
 ---
 
@@ -200,37 +142,62 @@ node setup.mjs --scan
 
 ---
 
-## 🏗️ 项目结构
+## 🏗️ 项目结构 (v3)
 
 ```
 ├── .pi/
 │   ├── settings.json               # pi 设置
 │   ├── APPEND_SYSTEM.md            # 常驻风格规范（前端附加）
-│   ├── state.json                  # 运行时状态缓存（session 事件是权威源）
+│   ├── state.json                  # 运行时状态
 │   ├── state_history.jsonl         # 状态变更历史
 │   ├── sessions/                   # 对话记录（按卡片隔离）
 │   ├── cards/                      # 📇 角色卡仓库
 │   │   ├── registry.json           #   卡片注册表
 │   │   └── <卡名>/                 #   单张卡片目录
-│   │       └── state.json          #   ⭐ 只读模板
 │   ├── extensions/
 │   │   ├── rp-engine/              # 🔧 引擎模块
 │   │   │   ├── index.ts              # 入口 + 事件注册
+│   │   │   ├── lifecycle/            # 生命周期：input / turn / message / before-agent / session
+│   │   │   │   ├── input.ts          #   ⭐ 上下文舞台指示（状态摘要 + World Agent + 世界书）
+│   │   │   │   ├── turn.ts           #   场景切换冷却 + generateSceneName + MemoryStore 记录
+│   │   │   │   ├── message.ts        #   正则钩子（prompt 剥离 + display 替换）
+│   │   │   │   ├── before-agent.ts   #   system prompt 装配（含隐式 4 通道叙事要求）
+│   │   │   │   ├── session.ts        #   session 持久化
+│   │   │   │   └── tool-events.ts    #   工具调用事件
+│   │   │   ├── prototypes/           # ⭐ 原型模块
+│   │   │   │   ├── scene-scheduler.ts #   场景调度器（地点/情感命名 + 切换冷却）
+│   │   │   │   ├── world-agent.ts     #   World Agent（事件推演 + 场景转折检测）
+│   │   │   │   └── memory-store.ts    #   3 层记忆存储
 │   │   │   ├── tavern-runner.ts      # SillyTavern JS 兼容层
-│   │   │   ├── lifecycle/            # 事件处理: session/turn/input/tool/before-agent/message
+│   │   │   ├── runtime-integration.ts # Runtime 桥接
+│   │   │   ├── card-manager.ts       # 卡片管理
+│   │   │   ├── commands.ts           # 命令系统
+│   │   │   ├── config.ts             # 配置类型
+│   │   │   ├── state-store.ts        # 状态管理
+│   │   │   ├── system-prompt.ts      # 系统提示词
+│   │   │   ├── worldbook.ts          # 世界书搜索注入
+│   │   │   ├── regex-processor.ts    # 正则编译器
+│   │   │   ├── tools.ts              # AI 工具定义
 │   │   │   ├── utils/                # json-patch / vector-search / session-cleanup
-│   │   │   └── ...
+│   │   │   └── persistence/          # 持久化扩展
 │   │   └── rp-web/                 # 🌐 前端界面
+│   │       ├── rp-web-app.js          # 主应用逻辑
+│   │       ├── rp-web-message-renderer.js # 4 通道格式渲染（含副视角折叠）
+│   │       ├── rp-web-style.css       # 4 通道 + 副视角 + 选项按钮样式
+│   │       ├── rp-web-xml.js          # 结构化 XML 解析
+│   │       └── ...
 │   ├── runtime/                    # ⚙️ Runtime Engine (Phase 3)
-│   │   ├── agent/                  #   Agent 子系统
-│   │   ├── attention/              #   注意力运行时
-│   │   ├── autonomous/             #   自主运行时
-│   │   ├── context/                #   上下文装配引擎
-│   │   ├── debug/                  #   调试系统
-│   │   └── evaluation/             #   📊 评估与遥测 (Phase 3.5)
+│   │   ├── agent/
+│   │   ├── attention/
+│   │   ├── autonomous/
+│   │   ├── context/
+│   │   ├── debug/
+│   │   └── evaluation/
 │   └── skills/rp/SKILL.md          # RP Skill 指令
 ├── setup.mjs                       # ⭐ 导入/注册/切换卡片脚本
-├── 项目部署.bat                      # 🚀 一键部署
+├── tsconfig.json
+├── tsconfig.rp-engine.json
+├── 项目部署.bat
 ├── .rpconfig.json                  # 运行时配置
 └── README.md
 ```
@@ -249,31 +216,42 @@ node setup.mjs --scan
 | 生理状态 | 动态 | 生理期、安全期、怀孕状态追踪 |
 | 特殊事件 | 布尔 | 花开蒂落、告白、结婚等里程碑标记 |
 
-### AI 工具（5 个）
+### AI 工具（4 个）
 
 | 工具 | 功能 |
 |------|------|
 | `read_state` | 读取角色当前状态 |
 | `update_state` | 更新归属值/背德值/欲望值/内心想法等 |
 | `advance_time` | 推进游戏天数 |
-| `load_worldbook` | 按关键词搜索世界书条目 |
-| `load_constant_worldbook` | 按编号顺序读取常开世界书设定 |
+| `load_worldbook` | 按关键词加载世界书条目 |
 
-### Session-first 状态架构
+### v3 新增机制
+
+| 机制 | 说明 |
+|------|------|
+| **隐式融合写作** | 心理/身体/环境/对话 4 维度无标记融入叙事，system prompt 自然约束 |
+| **input.ts 上下文舞台指示** | 每轮在用户消息前拼状态摘要 + World Agent 场景描述 + 记忆检索结果 |
+| **场景调度器** | SceneScheduler 管理场景生命周期，40+ 地点词 + 15 情感阶段自动命名场景 |
+| **场景切换冷却** | 规则路径和调度器路径均强制 >= 3 轮冷却，避免频繁切换 |
+| **World Agent 并行推演** | 每轮在 turn_end 并行执行：事件生成 + 场景转折检测 + round_summary 清洗 |
+| **MemoryStore 3 层架构** | event 层记录轮次摘要，summary 层定期合并，global 层存全局事实 |
+| **4 通道前端渲染** | `<<Environment>>` / `[Thought]` / `(Action)` / Speech 分别样式化显示（含副视角折叠卡片） |
+
+### state.json 只读模板机制
 
 - `cards/<卡名>/state.json` 是**只读模板**，存储角色初始设定
-- **PI session 事件是状态权威源**：每次 `saveState()` 先通过 `pi.appendEntry("rp-state", snapshot)` 写入 session
-- 文件缓存(`state.json` / `runtime_state.json`)仅加速启动，不保证最新
-- session 恢复时 `loadFromSession()` 优先重放 session 事件快照，文件为回退
+- 运行时动态数据通过 session 历史中的 `rp-state` 快照持久化
+- `saveState()` 不再写回卡片目录，保护模板不被污染
+- `loadState()` 启动时从卡片模板加载初始值
 - **`/reset` 命令**：从卡片模板重建，一键重置所有数值
 
 ### 上下文管理
 
 | 机制 | 说明 |
 |------|------|
-| **对话压缩** | PI 自动管理压缩时机，无需手动触发 |
+| **对话压缩** | 每 15 次用户交互强制压缩（AI 回复后触发，用户无感知） |
 | **世界书注入** | 每 3 次用户交互关键词匹配注入（前端不可见） |
-| **APPEND_SYSTEM 附加** | 每 5 次用户输入自动拼格式规范到消息末尾 |
+| **上下文舞台指示** | 每轮拼入状态摘要 + 场景上下文（input 事件，零额外消息开销） |
 | **用户轮数计数** | 基于 `turn_end` 精确计数，不受 steer 污染 |
 
 ---
@@ -299,7 +277,7 @@ node setup.mjs --scan
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `RP_WEB_PORT` | `3012` | Web 前端端口 |
-| `RP_WEB_HOST` | `127.0.0.1` | 监听地址 |
+| `RP_WEB_HOST` | `127.0.0.1` | 监听地址（局域网改 `0.0.0.0`） |
 | `RP_AUTHOR_NOTE` | — | Author Note 注入文本 |
 
 ---
@@ -322,6 +300,16 @@ pi
 ```
 
 ---
+
+## 📚 文档索引
+
+| 文档 | 说明 |
+|------|------|
+| [rp-engine/README.md](.pi/extensions/rp-engine/README.md) | 引擎模块详细文档 |
+| [Phase 3 架构文档](.pi/runtime/PHASE3-ARCHITECTURE.md) | Runtime 引擎完整架构 |
+
+---
+
 ## 📄 许可
 
 MIT License

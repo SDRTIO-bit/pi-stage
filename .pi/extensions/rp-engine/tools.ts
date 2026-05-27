@@ -43,11 +43,11 @@ export function createToolRegistry(
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const state = stateRef();
-      let charData = state[params.char];
+      let charData: any = null;
       let sourceCardId = "";
 
-      // 顶层找不到则遍历 cardStates 查找（多卡片隔离）
-      if (!charData && state.cardStates) {
+      // ★ 优先从 cardStates 查找（card runtime 是权威源），再回退顶层
+      if (state.cardStates) {
         for (const [cardId, cardData] of Object.entries(state.cardStates as Record<string, any>)) {
           const chars = cardData.characters || {};
           if (chars[params.char]) {
@@ -55,13 +55,15 @@ export function createToolRegistry(
             sourceCardId = cardId;
             break;
           }
-          // ★ 世界数据在 cardData.world，不在 characters
           if (params.char === "世界" && cardData.world) {
             charData = cardData.world;
             sourceCardId = cardId;
             break;
           }
         }
+      }
+      if (!charData) {
+        charData = state[params.char];
       }
 
       if (!charData) {
@@ -82,6 +84,7 @@ export function createToolRegistry(
         };
       }
 
+      console.log(`[RP] read_state → ${params.char} (${sourceCardId || 'top-level'})`);
       return {
         content: [{ type: "text", text: JSON.stringify(charData, null, 2) }],
         details: { char: params.char, cardId: sourceCardId, data: charData },
@@ -102,11 +105,11 @@ export function createToolRegistry(
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const state = stateRef();
-      let charData = state[params.char];
+      let charData: any = null;
       let sourceCardId = "";
 
-      // 顶层找不到则遍历 cardStates 查找（多卡片隔离）
-      if (!charData && state.cardStates) {
+      // ★ 优先从 cardStates 查找（card runtime 是权威源），再回退顶层
+      if (state.cardStates) {
         for (const [cardId, cardData] of Object.entries(state.cardStates as Record<string, any>)) {
           const chars = cardData.characters || {};
           if (chars[params.char]) {
@@ -114,7 +117,6 @@ export function createToolRegistry(
             sourceCardId = cardId;
             break;
           }
-          // ★ 世界数据在 cardData.world，不在 characters
           if (params.char === "世界" && cardData.world) {
             charData = cardData.world;
             sourceCardId = cardId;
@@ -122,13 +124,24 @@ export function createToolRegistry(
           }
         }
       }
+      if (!charData) {
+        charData = state[params.char];
+        if (charData) sourceCardId = "top-level";
+      }
 
       if (!charData) {
-        // ★ 角色不存在时自动创建
-        const newChar: Record<string, any> = {};
-        state[params.char] = newChar;
-        charData = newChar;
-        console.log(`[RP] 自动创建角色 "${params.char}"`);
+        // ★ 角色不存在时自动创建（写入激活卡片的 runtime）
+        const activeIds: string[] = state.activeCards || [];
+        if (activeIds.length > 0 && state.cardStates?.[activeIds[0]]) {
+          state.cardStates[activeIds[0]].characters[params.char] = {};
+          charData = state.cardStates[activeIds[0]].characters[params.char];
+          sourceCardId = activeIds[0];
+          console.log(`[RP] 自动创建角色 "${params.char}" → ${activeIds[0]}`);
+        } else {
+          state[params.char] = {};
+          charData = state[params.char];
+          console.log(`[RP] 自动创建角色 "${params.char}" → top-level`);
+        }
       }
 
       // 加载变量 Schema（按 sourceCardId 隔离）
@@ -171,6 +184,9 @@ export function createToolRegistry(
       }
 
       saveState();
+
+      // 日志：工具调用反馈
+      console.log(`[RP] update_state → ${params.char}:`, JSON.stringify(params.updates));
 
       // 写历史记录（走 HistoryWriter 缓冲刷写）
       // tool_result 事件作为冗余兜底，不依赖 PI 版本是否支持该事件
@@ -220,6 +236,7 @@ export function createToolRegistry(
 
       const events = processPeriodicEvents(state, params.days, appendHistory);
       saveState();
+      console.log('[RP] advance_time → +' + params.days + '天 → ' + world.当前日期 + ' ' + world.当前星期);
 
       const eventText = events.length > 0 ? `\n\n## 周期事件\n${events.join("\n")}` : "";
 

@@ -12,6 +12,10 @@ import type { AuthorNote } from "./author-note";
 import type { CompiledRegexHook } from "./regex-processor";
 import type { WorldbookService } from "./worldbook";
 import type { TavernRunner } from "./tavern-runner";
+import type { MemoryStore } from "./prototypes/memory-store";
+import type { SceneScheduler } from "./prototypes/scene-scheduler";
+import type { WorldAgent } from "./prototypes/world-agent";
+import type { CharacterRegistry } from "./prototypes/character-registry";
 
 export interface EngineServices {
   configRef: { current: RPConfig };
@@ -27,4 +31,12 @@ export interface EngineServices {
   lastTotalTokens: { value: number };
   worldbook: WorldbookService;
   tavernRunner: TavernRunner;
+  /** 记忆存储（可选，由 features.memoryStore 控制） */
+  memoryStore?: MemoryStore;
+  /** 场景调度器（可选，由 features.sceneScheduler 控制） */
+  sceneScheduler?: SceneScheduler;
+  /** 世界事件推演引擎 */
+  worldAgent?: WorldAgent;
+  /** 角色 Agent 注册中心 */
+  characterRegistry?: CharacterRegistry;
 }

@@ -104,14 +104,19 @@ export class MessageRenderer {
   /**
    * RP 内容处理核心函数
    * - 使用 parseRPContent 进行结构化 XML 解析
-   * - RP 模式下渲染副视角折叠卡片 + 选项按钮
+   * - RP 模式下：4 通道格式解析 + 副视角折叠卡片 + 选项按钮
    * - 非 RP 模式下只输出纯文本 markdown
    */
   _processRPContent(text) {
     const parsed = parseRPContent(text, this.rpMode);
 
-    // 渲染正文（保留现有 renderMarkdown 调用）
-    let result = renderMarkdown(parsed.mainContent);
+    // 4 通道格式渲染（仅 RP 模式 + 检测到通道标记时启用）
+    let result;
+    if (this.rpMode && /<<.+?>>|\[.+?\]/.test(parsed.mainContent)) {
+      result = this._renderFourChannel(parsed.mainContent);
+    } else {
+      result = renderMarkdown(parsed.mainContent);
+    }
 
     // ⭐ 应用 display 阶段正则钩子（Markdown→HTML 之后）
     if (this.regexHooks.length > 0) {
@@ -158,6 +163,60 @@ export class MessageRenderer {
     }
 
     return result;
+  }
+
+  /**
+   * 4 通道格式渲染
+   *
+   * 将正文中的 4 通道标记解析为独立样式元素：
+   *   <<Environment>> → 环境描写（浅背景 + 仿宋体）
+   *   [Thought]       → 内心独白（灰色斜体）
+   *   (Action)        → 身体语言（正文样式）
+   *   Speech          → 对话（标准 markdown 渲染）
+   *
+   * 降级策略：无 4 通道标记时退回 renderMarkdown
+   */
+  _renderFourChannel(text) {
+    if (!text || !text.trim()) return '';
+
+    const html = [];
+    // 按优先级匹配：<<…>> | […] | (…)
+    const regex = /<<(.+?)>>|\[(.+?)\]|\((.+?)\)/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = regex.exec(text)) !== null) {
+      // 通道之间的文本 → Speech
+      if (match.index > lastIndex) {
+        const before = text.slice(lastIndex, match.index);
+        if (before) {
+          html.push(renderMarkdown(before));
+        }
+      }
+
+      if (match[1] !== undefined) {
+        // <<Environment>>
+        html.push(`<span class="channel-env">${this.escapeHtml(match[1])}</span>`);
+      } else if (match[2] !== undefined) {
+        // [Thought] — 保留方括号，让用户清晰看到"内心戏"的起止
+        html.push(`<span class="channel-thought">[${this.escapeHtml(match[2])}]</span>`);
+      } else if (match[3] !== undefined) {
+        // (Action) — 保留圆括号
+        html.push(`<span class="channel-action">(${this.escapeHtml(match[3])})</span>`);
+      }
+
+      lastIndex = match.index + match[0].length;
+    }
+
+    // 剩余文本 → Speech
+    if (lastIndex < text.length) {
+      const remaining = text.slice(lastIndex);
+      if (remaining) {
+        html.push(renderMarkdown(remaining));
+      }
+    }
+
+    return html.join('');
   }
 
   renderThinkingBlock(thinking) {

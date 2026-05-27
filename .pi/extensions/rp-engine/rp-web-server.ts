@@ -596,7 +596,7 @@ export function createRPWebServer(
       ws.on("error", () => { rpClients.delete(ws); });
     });
 
-    const rpWebHost = process.env.RP_WEB_HOST || "localhost";
+    const rpWebHost = process.env.RP_WEB_HOST || "0.0.0.0";
     const tryListen = (port: number, maxAttempts = 10) => {
       rpServer!.listen(port, rpWebHost, () => {
         console.log(`[RP-Web] RP 前端页面: http://${rpWebHost}:${port}`);

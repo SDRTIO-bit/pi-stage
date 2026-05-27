@@ -20,6 +20,7 @@ import type { EngineServices } from "./services";
 import { getActiveCards, getCardWorldbookDirs, getCardTavernScriptDirs } from "./card-manager";
 import { initWorldbookService } from "./worldbook";
 import { TavernRunner } from "./tavern-runner";
+import { WorldAgent } from "./prototypes/world-agent";
 
 // 生命周期处理器
 import { handleSessionStart, handleSessionTree, handleSessionShutdown } from "./lifecycle/session";
@@ -81,11 +82,22 @@ export default function (pi: ExtensionAPI) {
     getScriptDirs: () => getCardTavernScriptDirs(),
   });
 
+  // ========== World Agent（世界事件推演引擎）==========
+  const worldAgent = new WorldAgent();
+
+  // ========== 可选引擎特性：MemoryStore + SceneScheduler ==========
+  // ⚠️ 创建延迟到 session_start（需要 loadRPConfig 后的真实配置）
+  // 详见 lifecycle/session.ts handleSessionStart
+
   const services: EngineServices = {
     configRef, store, rpWeb, agentApi, runtime, authorNote,
     compiledHooks, stateDir, worldbookDir, userTurnCounter, lastTotalTokens,
     worldbook: initWorldbookService(),
     tavernRunner,
+    memoryStore: undefined,
+    sceneScheduler: undefined,
+    worldAgent,
+    characterRegistry: undefined,
   };
 
   // ========== 生命周期事件注册 ==========
@@ -175,7 +187,9 @@ export default function (pi: ExtensionAPI) {
     () => store.saveState(),
     () => store.getHistoryPath(),
     stateDir.current,
-    (cardId: string) => store.resetCardFromTemplate(cardId)
+    (cardId: string) => store.resetCardFromTemplate(cardId),
+    () => services.memoryStore,
+    () => services.sceneScheduler
   );
   cmdRegistry.registerAll(pi);
 }

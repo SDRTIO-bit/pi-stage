@@ -29,6 +29,13 @@ export interface RPConfig {
     api_key?: string;
     permission?: string;
   };
+  /** 新引擎特性开关 */
+  features?: {
+    /** 启用 MemoryStore 记忆系统（4层记忆 + 语义检索） */
+    memoryStore?: boolean;
+    /** 启用 SceneScheduler 场景调度器 */
+    sceneScheduler?: boolean;
+  };
 }
 
 /** 内置默认配置 */
@@ -39,7 +46,7 @@ export const DEFAULT_CONFIG: RPConfig = {
   },
   model_max_tokens: 128000,
   rp_web_port: 3012,
-  rp_web_host: "localhost",
+  rp_web_host: "0.0.0.0",
 };
 
 /**

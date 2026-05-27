@@ -1725,6 +1725,57 @@ body {
 .message.assistant .message-content em { font-style: italic; color: var(--text-secondary); }
 .message.assistant .message-content a { color: var(--accent-text); text-decoration: none; border-bottom: 1px solid var(--accent-subtle); }
 .message.assistant .message-content a:hover { border-color: var(--accent-text); }
+
+/* ═══════════════════════════════════════════════════════
+   4 通道消息格式 — AdaMARP 渲染样式
+   ═══════════════════════════════════════════════════════ */
+
+/* [Thought] — 内心独白：灰色斜体，缩进，视觉上与正文区分 */
+.message.assistant .message-content .channel-thought {
+  display: block;
+  color: var(--text-dim, #888);
+  font-style: italic;
+  font-size: 0.88em;
+  line-height: 1.6;
+  padding-left: 1em;
+  border-left: 2px solid var(--border, #444);
+  margin: 6px 0;
+  opacity: 0.85;
+  transition: opacity 0.2s;
+}
+.message.assistant .message-content .channel-thought:hover {
+  opacity: 1;
+}
+/* 覆盖 .message.assistant .message-content em 的干扰 */
+.message.assistant .message-content .channel-thought em {
+  color: inherit;
+  font-style: italic;
+}
+
+/* (Action) — 身体语言：正文样式，圆括号保留 */
+.message.assistant .message-content .channel-action {
+  color: var(--text-primary);
+  line-height: 1.75;
+}
+.message.assistant .message-content .channel-action strong {
+  font-weight: 600;
+  color: var(--accent-text);
+}
+
+/* <<Environment>> — 环境映射：浅色背景，仿宋/楷体 */
+.message.assistant .message-content .channel-env {
+  display: block;
+  font-family: '仿宋', 'FangSong', '华文楷体', 'KaiTi', 'STKaiti', serif;
+  background: var(--bg-glass, rgba(255,255,255,0.03));
+  padding: 4px 10px;
+  margin: 6px 0;
+  border-radius: 4px;
+  color: var(--text-secondary, #a0b0c0);
+  line-height: 1.7;
+  border-left: 3px solid var(--border, #3a4a5a);
+  font-size: 0.95em;
+}
+
 .message.assistant .message-content ul,
 .message.assistant .message-content ol { margin: 6px 0; padding-left: 20px; }
 .message.assistant .message-content li { margin-bottom: 3px; }
