@@ -1,0 +1,15 @@
+node_modules/
+dist/
+sessions/
+*.log
+# 技能 symlink 目录（源文件在 .agents/skills/）
+.pi/skills/
+# 卡片导入生成物
+.pi/cards/
+# 临时测试脚本
+_test_*.ts
+_import_*.ts
+_verify_*.ts
+_inspect_*.ts
+_inspect2_*.ts
+_import2_*.ts

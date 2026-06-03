@@ -1,0 +1,34 @@
+{
+  "name": "pi-rp-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "RP Engine — LLM-neutral roleplay runtime with budgeted context assembly, card isolation, and session-first state",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write src/ tests/ examples/",
+    "format:check": "prettier --check src/ tests/ examples/",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "check": "npm run format:check && npm run typecheck && npm run lint && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.18.1",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "png-chunk-text": "^1.0.0",
+    "png-chunks-extract": "^1.0.0",
+    "ws": "^8.21.0"
+  }
+}
