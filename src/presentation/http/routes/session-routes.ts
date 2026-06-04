@@ -96,6 +96,14 @@ export function register(
     )
   }
 
+  // DELETE /session/:id
+  if (pathname.startsWith("/session/") && method === "DELETE") {
+    const sid = pathname.split("/")[2]
+    const session = ctx.app.stateStore.getSession(sid)
+    if (!session) return (ctx.json(res, 404, { error: "Session not found" }), true)
+    ctx.app.stateStore.deleteSession(sid)
+    return (ctx.json(res, 200, { ok: true, sessionId: sid }), true)
+  }
   // GET /sessions
   if (pathname === "/sessions" && method === "GET") {
     return (ctx.json(res, 200, ctx.app.stateStore.listSessions()), true)

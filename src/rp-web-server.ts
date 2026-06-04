@@ -201,6 +201,8 @@ export function createRPWebServer(
 
     try {
       const entries: any[] = []
+      const history: string[] = []
+      let sessionCardId = ""
       const rl = createInterface({
         input: createReadStream(filePath, { encoding: "utf-8" }),
         crlfDelay: Infinity,
@@ -210,6 +212,19 @@ export function createRPWebServer(
         if (!line.trim()) continue
         let entry: any
         try { entry = JSON.parse(line) } catch { continue }
+
+        // Extract cardId from tool calls in assistant messages
+        if (!sessionCardId) {
+          const msg = entry.message
+          if (entry.type === "message" && msg?.role === "assistant" && Array.isArray(msg.content)) {
+            for (const block of msg.content) {
+              if (block.type === "toolCall" && block.name === "update_state" && block.arguments?.cardId) {
+                sessionCardId = block.arguments.cardId
+              }
+            }
+          }
+        }
+
         if (entry.type !== "message") continue
 
         const msg = entry.message
@@ -232,15 +247,14 @@ export function createRPWebServer(
           type: "message",
           message: { role, content: text },
         })
+        history.push(`${role}: ${text}`)
       }
       rl.close()
-      return entries
+      return { entries, history, cardId: sessionCardId }
     } catch {
       return null
     }
-  }
-
-  // ========== 命令处理 ==========
+  }  // ========== 命令处理 ==========
 
   function execRPCommand(code: string): string | null {
     const parts = code.startsWith("/") ? code.slice(1).split(/\s+/) : code.split(/\s+/)
@@ -367,12 +381,58 @@ export function createRPWebServer(
             sendToRP(ws, err("load_session", "no file specified"))
             break
           }
-          const entries = await loadSessionEntries(file)
-          if (!entries) {
+          const result = await loadSessionEntries(file)
+          if (!result || !result.entries) {
             sendToRP(ws, err("load_session", "session not found: " + file))
             break
           }
-          sendToRP(ws, { type: "load_session_entries", entries })
+
+          // Rebuild stateStore session with loaded PI history
+          const sid = getSessionId()
+          const newSid = sid || `pi-session-${Date.now()}`
+          const session = sid ? stateStore.getSession(sid) : undefined
+          if (session) {
+            // Reset existing session history with loaded data
+            session.history = [...result.history]
+            if (result.cardId && !session.cardId) session.cardId = result.cardId
+            stateStore.persist(sid)
+          } else {
+            // No active session, create a new one with loaded history
+            const newSession = stateStore.createSession(newSid, {
+              history: [...result.history],
+            })
+            if (result.cardId) newSession.cardId = result.cardId
+            stateStore.persist(newSid)
+          }
+
+          // 加载历史后，将最近对话通过 PI 系统消息注入上下文
+          // 使用 /reset 清空 PI session 避免与新加载历史冲突
+          pi.sendUserMessage("/reset")
+          
+          // 注入最后几轮历史对话作为 PI 引擎的上下文
+          const recentHistory = result.history.slice(-8) // 最后 4 轮 (8 条消息)
+          if (recentHistory.length > 0) {
+            const historyText = recentHistory.map((h: string) => {
+              const colonIdx = h.indexOf(": ")
+              if (colonIdx === -1) return h
+              const role = h.slice(0, colonIdx)
+              const text = h.slice(colonIdx + 2)
+              const speaker = role === "user" ? "[用户]" : "[AI]"
+              return `${speaker} ${text}`
+            }).join("\n\n")
+            
+            // 用系统消息格式注入上下文
+            pi.sendUserMessage(
+              `[历史记录恢复] 已加载历史会话。以下最近 ${recentHistory.length / 2} 轮对话记录，请基于此上下文继续角色扮演：\n\n${historyText}`,
+            )
+          }
+
+          sendToRP(ws, {
+            type: "load_session_entries",
+            entries: result.entries,
+            sessionId: newSid,
+            cardId: result.cardId || "",
+          })
           break
         }
         case "new_session": {

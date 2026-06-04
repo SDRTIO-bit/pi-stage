@@ -23,6 +23,14 @@ export function serveStaticFile(req: http.IncomingMessage, res: http.ServerRespo
 
   if (req.method !== "GET") return false
 
+  // Silence favicon 404
+  if (pathname === "/favicon.ico") {
+    res.writeHead(204)
+    res.end()
+    return true
+  }
+
+
   const serveFile = (filePath: string): boolean => {
     if (!fs.existsSync(filePath)) return false
     const ext = path.extname(filePath)

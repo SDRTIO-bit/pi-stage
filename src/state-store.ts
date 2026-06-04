@@ -137,6 +137,11 @@ export class StateStore {
   listSessions(): string[] {
     return this._storage.list()
   }
+
+  deleteSession(sessionId: string): void {
+    this.sessions.delete(sessionId)
+    this._storage.delete(sessionId)
+  }
 }
 
 /** @deprecated 使用组合根 `createApp()` 或 `new StateStore(storage)` 替代 */
