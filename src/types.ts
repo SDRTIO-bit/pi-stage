@@ -119,6 +119,8 @@ export interface WorldbookIndex {
 
 export interface SessionState {
   sessionId: string
+  /** 关联的卡片 ID（一对一模型） */
+  cardId: string
   startedAt: number
   activatedCards: Map<string, CardState>
   history: string[]

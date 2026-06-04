@@ -39,7 +39,6 @@ const statusText = document.getElementById('status-text');
 
 // RP 模式
 const rpModeBtn = document.getElementById('rp-mode-btn');
-const rpStatusBtn = document.getElementById('rp-status-btn');
 const rpStatusOverlay = document.getElementById('rp-status-overlay');
 const rpStatusClose = document.getElementById('rp-status-close');
 const rpStatusContent = document.getElementById('rp-status-content');
@@ -62,10 +61,15 @@ let currentActiveCards = []; // 服务端返回的当前激活卡片
 const DEFAULT_SNIPPETS = [
   { label: '📊 角色状态', code: '/status' },
   { label: '📋 变更历史', code: '/history' },
+  { label: '🧠 记忆系统', code: '/rp-mode' },
+  { label: '📈 记忆统计', code: '/memory_stats' },
+  { label: '🔍 搜索记忆', code: '/memory_search' },
+  { label: '💾 保存记忆', code: '/memory_remember' },
+  { label: '🎭 角色卡', code: '/rp-cards' },
+  { label: '⚙️ 全局预设', code: '/rp-presets' },
   { label: 'ℹ️ RP帮助', code: '/rp' },
   { label: '🗺 查看路线', code: '/route' },
   { label: '🛤 选择路线', code: '/route' },
-  { label: '🎭 卡片列表', code: '/card list' },
   { label: '🗜 压缩上下文', code: '/compact' },
   { label: '🌲 分支管理', code: '/tree' },
 ];
@@ -178,12 +182,15 @@ function renderCardPicker(cards, activeIds) {
     showCardPicker();
   }
 
+  // 一对一模型：单选。优先选中当前激活的卡，否则选第一张
+  const activeId = activeIds && activeIds.length > 0 ? activeIds[0] : cards[0]?.id;
+
   let html = '';
   for (const card of cards) {
-    const checked = selectedCardIds.includes(card.id) ? 'checked' : '';
+    const checked = card.id === activeId ? 'checked' : '';
     const activeMark = card.active ? ' 🟢' : '';
     html += `<label class="session-picker-item" style="cursor:pointer;align-items:flex-start;">
-      <input type="checkbox" class="card-checkbox" data-card-id="${escapeHtmlAttr(card.id)}" ${checked} style="margin-top:3px;flex-shrink:0;">
+      <input type="radio" name="card-select" class="card-radio" data-card-id="${escapeHtmlAttr(card.id)}" ${checked} style="margin-top:3px;flex-shrink:0;">
       <div style="flex:1;">
         <div style="font-weight:bold;color:#e0e8f0;">${escapeHtml(card.name)}${activeMark}</div>
         <div style="font-size:11px;color:#556688;">${escapeHtml(card.id)} · ${escapeHtml(card.importedAt ? new Date(card.importedAt).toLocaleDateString('zh-CN') : '')}</div>
@@ -192,14 +199,22 @@ function renderCardPicker(cards, activeIds) {
   }
   cardPickerList.innerHTML = html;
 
-  // 绑定 checkbox 事件
-  document.querySelectorAll('.card-checkbox').forEach(cb => {
-    cb.addEventListener('change', () => {
-      const cardId = cb.dataset.cardId;
-      if (cb.checked) {
-        if (!selectedCardIds.includes(cardId)) selectedCardIds.push(cardId);
-      } else {
-        selectedCardIds = selectedCardIds.filter(id => id !== cardId);
+  // 绑定 radio 事件 — 点击整行即可选中
+  document.querySelectorAll('.card-radio').forEach(radio => {
+    radio.addEventListener('change', () => {
+      if (radio.checked) {
+        selectedCardIds = [radio.dataset.cardId];
+      }
+    });
+  });
+  // 点击 label 行也触发对应 radio
+  document.querySelectorAll('#card-picker-list .session-picker-item').forEach(label => {
+    label.addEventListener('click', (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      const radio = label.querySelector('.card-radio');
+      if (radio) {
+        radio.checked = true;
+        selectedCardIds = [radio.dataset.cardId];
       }
     });
   });
@@ -208,13 +223,11 @@ function renderCardPicker(cards, activeIds) {
 // 确认选择按钮
 cardPickerConfirm.addEventListener('click', () => {
   if (selectedCardIds.length === 0) {
-    alert('请至少选择一张角色卡');
+    alert('请选择一张角色卡');
     return;
   }
-  // 检查是否与当前激活不同
-  const same = selectedCardIds.length === currentActiveCards.length &&
-    selectedCardIds.every(id => currentActiveCards.includes(id));
-  if (same) {
+  // 一对一：检查是否与当前激活相同
+  if (currentActiveCards.length === 1 && selectedCardIds[0] === currentActiveCards[0]) {
     hideCardPicker();
     if (!hasShownPicker) {
       hasShownPicker = true;
@@ -225,11 +238,7 @@ cardPickerConfirm.addEventListener('click', () => {
   sendCommand('activate_cards', { cardIds: selectedCardIds });
 });
 
-// 卡片按钮
-const rpCardsBtn = document.getElementById('rp-cards-btn');
-if (rpCardsBtn) {
-  rpCardsBtn.addEventListener('click', showCardPicker);
-}
+// 卡片按钮 - 已移至 quickbar
 
 function escapeHtml(text) {
   const d = document.createElement('div');
@@ -1084,7 +1093,6 @@ if (savedAppendStyle === '1') {
 // RP 模式开关——默认开启
 rpModeBtn.classList.add('active');
 messageRenderer.setRPMode(true);
-rpStatusBtn.classList.add('visible');
 rpModeBtn.querySelector('span:last-child').textContent = 'RP ON';
 
 rpModeBtn.addEventListener('click', () => {
@@ -1092,10 +1100,8 @@ rpModeBtn.addEventListener('click', () => {
   rpModeBtn.classList.toggle('active');
   messageRenderer.setRPMode(rpMode);
   if (rpMode) {
-    rpStatusBtn.classList.add('visible');
     rpModeBtn.querySelector('span:last-child').textContent = 'RP ON';
   } else {
-    rpStatusBtn.classList.remove('visible');
     rpModeBtn.querySelector('span:last-child').textContent = 'RP';
   }
 });
@@ -1122,12 +1128,6 @@ if (appendStyleBtn) {
   });
 }
 
-// 状态面板按钮
-rpStatusBtn.addEventListener('click', () => {
-  rpStatusOverlay.classList.add('open');
-  sendCommand('get_rp_state');
-});
-
 // 关闭状态面板
 rpStatusClose.addEventListener('click', () => {
   rpStatusOverlay.classList.remove('open');
@@ -1149,6 +1149,48 @@ function createSettingsButton() {
   }
 }
 createSettingsButton();
+
+// ============================================================
+// 快捷操作栏
+// ============================================================
+
+const rpQuickbar = document.getElementById('rp-quickbar');
+if (rpQuickbar) {
+  rpQuickbar.addEventListener('click', (e) => {
+    const btn = e.target.closest('.rp-quick-btn');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    switch (action) {
+      case 'memory-stats':
+        sendCommand('exec', { code: '/memory_stats' });
+        break;
+      case 'memory-search':
+        const query = prompt('输入搜索关键词：\n（例如：克莱恩 非凡途径）');
+        if (query && query.trim()) {
+          messageInput.value = `/memory_search ${query.trim()}`;
+          messageInput.focus();
+          chatForm.dispatchEvent(new Event('submit'));
+        }
+        break;
+      case 'cards':
+        showCardPicker();
+        break;
+      case 'status':
+        sendCommand('exec', { code: '/status' });
+        rpStatusOverlay.classList.add('open');
+        sendCommand('get_rp_state');
+        break;
+      case 'history':
+        messageInput.value = '/history';
+        messageInput.focus();
+        chatForm.dispatchEvent(new Event('submit'));
+        break;
+      case 'terminal':
+        rpTermOverlay.classList.toggle('open');
+        break;
+    }
+  });
+}
 
 // 新会话按钮
 sessionPickerNew.addEventListener('click', () => {
@@ -1318,7 +1360,6 @@ document.addEventListener('click', (e) => {
 // 代码终端面板
 // ============================================================
 
-const rpTermBtn = document.getElementById('rp-term-btn');
 const rpTermOverlay = document.getElementById('rp-term-overlay');
 const rpTermClose = document.getElementById('rp-term-close');
 const rpTermInput = document.getElementById('rp-term-input');
@@ -1334,11 +1375,6 @@ if (rpSnippetBtn) {
   });
 }
 
-if (rpTermBtn) {
-  rpTermBtn.addEventListener('click', () => {
-    rpTermOverlay.classList.toggle('open');
-  });
-}
 if (rpTermClose) {
   rpTermClose.addEventListener('click', () => {
     rpTermOverlay.classList.remove('open');
@@ -1390,7 +1426,16 @@ document.querySelectorAll('.rp-term-cmd').forEach(btn => {
 
 function handleExecResult(msg) {
   if (msg.success) {
-    rpTermResult.textContent = '✅ ' + (msg.message || '已执行');
+    // 解析记忆统计，更新 header 计数器
+    const text = msg.message || '';
+    const memMatch = text.match(/语义记忆:\s*(\d+)/);
+    if (memMatch) {
+      const count = parseInt(memMatch[1]);
+      const counter = document.getElementById('rp-memory-count');
+      if (counter) { counter.textContent = count; counter.title = text; }
+    }
+    // 使用 innerHTML 以支持换行（将 \n 转为 <br>）
+    rpTermResult.innerHTML = '✅ ' + escapeHtml(text).replace(/\n/g, '<br>');
     rpTermOverlay.classList.remove('open');
   } else {
     rpTermResult.textContent = '❌ ' + (msg.error || '失败');
@@ -1444,6 +1489,58 @@ function loadCardUI(cardId, files) {
 
   console.log('[RP] 卡片 UI 已加载:', cardId, files.map(f => f.name).join(', '));
 }
+
+// ============================================================
+// 双击 Esc 回退
+// ============================================================
+
+let _lastEscTime = 0;
+const ESC_DOUBLE_MS = 500;
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+
+  // 如果焦点在输入框里且有文字，先清空输入框（单次 Esc）
+  if (document.activeElement === messageInput && messageInput.value.trim()) {
+    // 不阻止默认，让浏览器处理
+    return;
+  }
+
+  const now = Date.now();
+  const isDouble = (now - _lastEscTime) < ESC_DOUBLE_MS;
+  _lastEscTime = now;
+
+  // 收集所有打开的 overlay
+  const overlays = [
+    { el: document.getElementById('rp-status-overlay'), cls: 'rp-status-overlay' },
+    { el: document.getElementById('rp-term-overlay'), cls: 'rp-term-overlay' },
+    { el: document.getElementById('card-picker-overlay'), cls: 'card-picker-overlay' },
+    { el: document.getElementById('session-picker-overlay'), cls: 'session-picker-overlay' },
+    { el: document.getElementById('snippet-overlay'), cls: 'snippet-overlay' },
+  ];
+  // 设置面板（动态创建）
+  const settingsOverlay = document.querySelector('.rp-settings-overlay');
+  if (settingsOverlay) overlays.push({ el: settingsOverlay, cls: 'settings' });
+
+  const anyOpen = overlays.some(o => o.el?.classList.contains('open'));
+
+  if (anyOpen) {
+    // 关闭所有面板
+    e.preventDefault();
+    for (const o of overlays) {
+      o.el?.classList.remove('open');
+    }
+    // 同时关闭 slash hints
+    hideSlashHints();
+  } else if (isDouble) {
+    // 无面板打开 + 双击 → 回退到聊天初始状态
+    e.preventDefault();
+    messageInput.blur();
+    messageInput.value = '';
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    _lastEscTime = 0; // 重置，避免连续双击
+  }
+});
 
 // ============================================================
 // 启动

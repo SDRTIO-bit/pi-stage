@@ -125,7 +125,11 @@ function tryParseCardText(rawText: string): Record<string, unknown> | null {
 
   // 方式1: 纯 JSON
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    try { return JSON.parse(trimmed) } catch { /* fall through */ }
+    try {
+      return JSON.parse(trimmed)
+    } catch {
+      /* fall through */
+    }
   }
 
   // 方式2: Base64（含 URL-safe 变体）
@@ -147,8 +151,12 @@ function tryParseCardText(rawText: string): Record<string, unknown> | null {
         if (decompUtf8.startsWith("{") || decompUtf8.startsWith("[")) {
           return JSON.parse(decompUtf8)
         }
-      } catch { /* not zlib */ }
-    } catch { /* skip */ }
+      } catch {
+        /* not zlib */
+      }
+    } catch {
+      /* skip */
+    }
   }
 
   return null
@@ -171,10 +179,21 @@ const V1_LEGACY_MAP: Record<string, string> = {
 }
 
 const V1_FLAT_FIELDS = [
-  "name", "description", "personality", "scenario",
-  "first_mes", "mes_example", "creator_notes", "system_prompt",
-  "post_history_instructions", "alternate_greetings", "tags", "creator",
-  "character_version", "extensions", "character_book",
+  "name",
+  "description",
+  "personality",
+  "scenario",
+  "first_mes",
+  "mes_example",
+  "creator_notes",
+  "system_prompt",
+  "post_history_instructions",
+  "alternate_greetings",
+  "tags",
+  "creator",
+  "character_version",
+  "extensions",
+  "character_book",
 ]
 
 function normalizeV1(card: Record<string, unknown>): Record<string, unknown> {
@@ -295,7 +314,7 @@ function parsePNGChunksExtract(raw: Buffer): Record<string, unknown> {
   if (cardChunks.length === 0) {
     throw new Error(
       "PNG 文件中未找到角色卡数据。" +
-      '请确认此 PNG 是由 SillyTavern 导出的角色卡（需包含 "chara" 或 "ccv3" 元数据）。',
+        '请确认此 PNG 是由 SillyTavern 导出的角色卡（需包含 "chara" 或 "ccv3" 元数据）。',
     )
   }
 
@@ -312,14 +331,16 @@ function parsePNGChunksExtract(raw: Buffer): Record<string, unknown> {
           const garbledCount = (text.match(/�/g) || []).length
           candidates.push({ parsed, score: garbledCount, source: `${keyword}(${type})/${enc}` })
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
   }
 
   if (candidates.length === 0) {
     throw new Error(
       "无法解析 PNG 中的角色卡数据。" +
-      `已尝试 ${cardChunks.length} 个文本 chunk、多种编码组合，均无法提取有效 JSON。`,
+        `已尝试 ${cardChunks.length} 个文本 chunk、多种编码组合，均无法提取有效 JSON。`,
     )
   }
 
@@ -371,9 +392,10 @@ function parsePngTextChunks(raw: Buffer): Map<string, string> {
         rest = rest.slice(langEnd + 1)
         const transEnd = rest.indexOf(0)
         const payload = rest.slice(transEnd + 1)
-        const value = compFlag && compMethod === 0
-          ? zlib.inflateSync(payload).toString("utf8")
-          : payload.toString("utf8")
+        const value =
+          compFlag && compMethod === 0
+            ? zlib.inflateSync(payload).toString("utf8")
+            : payload.toString("utf8")
         texts.set(keyword, value)
       } else if (type === "IEND") {
         break
@@ -397,7 +419,10 @@ function extractFromPng(raw: Buffer): Record<string, unknown> {
     for (const key of ["ccv3", "chara"]) {
       if (texts.has(key)) {
         const parsed = tryParseCardText(texts.get(key)!)
-        if (parsed) { card = parsed; break }
+        if (parsed) {
+          card = parsed
+          break
+        }
       }
     }
   }
@@ -415,8 +440,12 @@ function isBase64Char(b: number): boolean {
     (b >= 0x41 && b <= 0x5a) ||
     (b >= 0x61 && b <= 0x7a) ||
     (b >= 0x30 && b <= 0x39) ||
-    b === 0x2b || b === 0x2f || b === 0x3d ||
-    b === 0x20 || b === 0x0a || b === 0x0d
+    b === 0x2b ||
+    b === 0x2f ||
+    b === 0x3d ||
+    b === 0x20 ||
+    b === 0x0a ||
+    b === 0x0d
   )
 }
 
@@ -468,10 +497,16 @@ function scanForCard(raw: Buffer): Record<string, unknown> | null {
         if (depth === 0) {
           try {
             const obj = JSON.parse(text.slice(0, i + 1))
-            if (obj && typeof obj === "object" && ("data" in obj || "name" in obj || "char_name" in obj)) {
+            if (
+              obj &&
+              typeof obj === "object" &&
+              ("data" in obj || "name" in obj || "char_name" in obj)
+            ) {
               return normalizeV1(obj)
             }
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
           break
         }
       }
@@ -502,8 +537,12 @@ function parseCharacterCard(filePath: string): Record<string, unknown> {
   }
 
   // WEBP / JPEG
-  if (ext === ".webp" || ext === ".jpg" || ext === ".jpeg"
-      || raw.slice(0, 2).equals(Buffer.from([0xff, 0xd8]))) {
+  if (
+    ext === ".webp" ||
+    ext === ".jpg" ||
+    ext === ".jpeg" ||
+    raw.slice(0, 2).equals(Buffer.from([0xff, 0xd8]))
+  ) {
     const card = scanForCard(raw as Buffer)
     if (!card) throw new Error("图片中未找到角色卡数据")
     return card
@@ -529,9 +568,16 @@ function extractCharacterData(card: Record<string, unknown>): {
   const source = (card.data as Record<string, unknown> | undefined) ?? card
 
   const fields = [
-    "name", "description", "personality", "scenario",
-    "first_mes", "mes_example", "system_prompt", "post_history_instructions",
-    "creator_notes", "character_version",
+    "name",
+    "description",
+    "personality",
+    "scenario",
+    "first_mes",
+    "mes_example",
+    "system_prompt",
+    "post_history_instructions",
+    "creator_notes",
+    "character_version",
   ]
 
   const extracted: Record<string, unknown> = {}
@@ -555,8 +601,11 @@ function extractCharacterData(card: Record<string, unknown>): {
   extracted.tags = source.tags || card.tags || []
 
   let tavernHelper =
-    srcExt?.tavern_helper ?? cardExt?.tavern_helper ??
-    srcExt?.TavernHelper_scripts ?? cardExt?.TavernHelper_scripts ?? []
+    srcExt?.tavern_helper ??
+    cardExt?.tavern_helper ??
+    srcExt?.TavernHelper_scripts ??
+    cardExt?.TavernHelper_scripts ??
+    []
   if (Array.isArray(tavernHelper) && tavernHelper.length > 0 && Array.isArray(tavernHelper[0])) {
     const scriptsEntry = (tavernHelper as [string, unknown][]).find(
       (e) => Array.isArray(e) && e[0] === "scripts",
@@ -603,18 +652,22 @@ function generateWorldbookEntries(
     const prefix = String(orderNum).padStart(4, "0")
 
     const targetDir = enabled
-      ? (constant ? dirs.constant : dirs.trigger)
-      : (constant ? dirs.disabledConst : dirs.disabledTrigger)
+      ? constant
+        ? dirs.constant
+        : dirs.trigger
+      : constant
+        ? dirs.disabledConst
+        : dirs.disabledTrigger
 
     const keys = entry.keys || entry.key || []
-    const keywordList = Array.isArray(keys) ? keys as string[] : [keys as string]
+    const keywordList = Array.isArray(keys) ? (keys as string[]) : [keys as string]
     const entryContent = (entry.content as string) || ""
     const comment = (entry.comment || entry.name || `条目${count + 1}`) as string
     const priority = (entry.priority ?? entry.insertion_order ?? entry.order ?? count) as number
     const selective = (entry.selective !== undefined ? entry.selective : true) as boolean
-    const secondaryKeys = ((entry.secondary_keys || entry.keysecondary || []) as string[])
-    const position = ((entry.position ?? (constant ? 1 : undefined)) ?? 1) as number
-    const depth = ((entry.depth ?? 4) as number)
+    const secondaryKeys = (entry.secondary_keys || entry.keysecondary || []) as string[]
+    const position = (entry.position ?? (constant ? 1 : undefined) ?? 1) as number
+    const depth = (entry.depth ?? 4) as number
 
     const safeName = comment.replace(/[<>:"/\\|?*]/g, "_").slice(0, 60)
     let fileName = `${prefix}-${safeName}.md`
@@ -645,7 +698,11 @@ function generateWorldbookEntries(
     if (!enabled) fmLines.push("disabled: true")
     fmLines.push("---")
 
-    fs.writeFileSync(filePath, `${fmLines.join("\n")}\n\n# ${comment}\n\n${entryContent}\n`, "utf-8")
+    fs.writeFileSync(
+      filePath,
+      `${fmLines.join("\n")}\n\n# ${comment}\n\n${entryContent}\n`,
+      "utf-8",
+    )
     count++
   }
 
@@ -760,9 +817,17 @@ function generateCardState(
     imported_at: new Date().toISOString(),
     source: "character_card",
   }
-  for (const f of ["description", "personality", "scenario", "first_mes",
-    "mes_example", "system_prompt", "post_history_instructions",
-    "creator_notes", "character_version"]) {
+  for (const f of [
+    "description",
+    "personality",
+    "scenario",
+    "first_mes",
+    "mes_example",
+    "system_prompt",
+    "post_history_instructions",
+    "creator_notes",
+    "character_version",
+  ]) {
     const v = characterData[f]
     if (v) state[f] = v
   }
@@ -960,7 +1025,9 @@ function preprocessTavernScripts(
         }
       }
       fs.writeFileSync(statePath, JSON.stringify(cardState, null, 2), "utf-8")
-    } catch { /* state 写入失败不影响主流程 */ }
+    } catch {
+      /* state 写入失败不影响主流程 */
+    }
   }
 
   return Object.keys(charVariables).filter((k) => k !== "事件").length
@@ -1015,11 +1082,7 @@ function scanRemoteUrls(
   }
 
   if (urls.length > 0) {
-    fs.writeFileSync(
-      path.join(cardDir, "remote_urls.json"),
-      JSON.stringify(urls, null, 2),
-      "utf-8",
-    )
+    fs.writeFileSync(path.join(cardDir, "remote_urls.json"), JSON.stringify(urls, null, 2), "utf-8")
   }
   return urls.length
 }
@@ -1071,7 +1134,7 @@ function assembleContent(
   const version = spec.includes("v3") ? 3 : 2
 
   const dExt = d.extensions as Record<string, unknown> | undefined
-  const tExt = (card.extensions as Record<string, unknown> | undefined)
+  const tExt = card.extensions as Record<string, unknown> | undefined
 
   const meta: CardMeta = {
     id: cardId,
@@ -1082,21 +1145,24 @@ function assembleContent(
   }
 
   const parts: string[] = []
-  const sysPrompt = ((d.system_prompt as string)
-    || (dExt?.depth_prompt as Record<string, unknown>)?.prompt as string
-    || "") as string
+  const sysPrompt = ((d.system_prompt as string) ||
+    ((dExt?.depth_prompt as Record<string, unknown>)?.prompt as string) ||
+    "") as string
   const personality = (d.personality as string) || ""
   const scenario = (d.scenario as string) || ""
   const firstMes = (d.first_mes as string) || ""
   const mesExample = (d.mes_example as string) || ""
-  const creatorNotes = ((d.creator_notes as string) || (card.creatorcomment as string) || "") as string
+  const creatorNotes = ((d.creator_notes as string) ||
+    (card.creatorcomment as string) ||
+    "") as string
 
   const world = ((dExt?.world as string) ?? (tExt?.world as string) ?? "") as string
   const worldLine = world ? `World: ${world}` : ""
 
   if (sysPrompt) parts.push(`[System]\n${sysPrompt}`)
   if (personality) parts.push(`[Personality]\n${personality}`)
-  if (scenario || worldLine) parts.push(`[Scenario]\n${[scenario, worldLine].filter(Boolean).join("\n")}`)
+  if (scenario || worldLine)
+    parts.push(`[Scenario]\n${[scenario, worldLine].filter(Boolean).join("\n")}`)
   if (firstMes) parts.push(`[First Message]\n${firstMes}`)
   if (mesExample) parts.push(`[Example Messages]\n${mesExample}`)
   if (creatorNotes) parts.push(`[Creator Notes]\n${creatorNotes}`)
@@ -1120,15 +1186,15 @@ function assembleContent(
  * - 预处理 tavern_helper → variable_schema.json
  * - 注册到 CardManager
  */
-export function importCardFromFile(
-  filePath: string,
-  options?: ImportOptions,
-): CardImportResult {
+export function importCardFromFile(filePath: string, options?: ImportOptions): CardImportResult {
   const card = parseCharacterCard(filePath)
   const normalized = normalizeV1(card)
 
   const { extracted } = extractCharacterData(card)
-  const charName = (options?.cardName || (extracted.name as string) || path.basename(filePath, path.extname(filePath)))
+  const charName =
+    options?.cardName ||
+    (extracted.name as string) ||
+    path.basename(filePath, path.extname(filePath))
 
   // 确定目标目录
   const cwd = options?.projectCwd ?? process.cwd()
@@ -1172,7 +1238,9 @@ export function importCardFromFile(
   if (!options?.skipRegistry) {
     try {
       registerCardWithManager(charName, cardDir, cwd)
-    } catch { /* CardManager 可能未初始化 */ }
+    } catch {
+      /* CardManager 可能未初始化 */
+    }
   }
 
   // 组装内容预览

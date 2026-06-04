@@ -19,6 +19,7 @@ export function schedule(nodes: PromptNode[], budget: Budget): ScheduleResult {
   const droppedIds: string[] = []
 
   for (const node of nodes) {
+    const remaining = budget.hard - totalBytes
     // 硬上限检查：summarize 策略可尝试降级后放入，其他策略直接丢弃
     const exceedsHard = totalBytes + node.byteSize > budget.hard
     if (exceedsHard && node.degradationStrategy !== "summarize") {
@@ -33,8 +34,9 @@ export function schedule(nodes: PromptNode[], budget: Budget): ScheduleResult {
       continue
     }
     if (exceedsHard) {
-      // summarize 策略：尝试摘要降级，失败则丢弃
-      const degraded = applyDegradation(node, budget.hard - totalBytes)
+      // summarize 策略：只用60%剩余预算，留空间给后续节点
+      const cappedRemaining = Math.floor(remaining * 0.6)
+      const degraded = applyDegradation(node, cappedRemaining)
       if (degraded && totalBytes + degraded.node.byteSize <= budget.hard) {
         included.push(degraded.node)
         totalBytes += degraded.node.byteSize
@@ -54,8 +56,9 @@ export function schedule(nodes: PromptNode[], budget: Budget): ScheduleResult {
 
     // 舒适区检查
     if (totalBytes + node.byteSize > budget.target) {
-      // 尝试降级
-      const degraded = applyDegradation(node, budget.hard - totalBytes)
+      // 尝试降级（用60%剩余预算，保留空间给后续节点）
+      const cappedRemaining = Math.floor((budget.hard - totalBytes) * 0.6)
+      const degraded = applyDegradation(node, cappedRemaining)
       if (degraded) {
         included.push(degraded.node)
         totalBytes += degraded.node.byteSize

@@ -16,8 +16,5 @@ declare module "png-chunk-text" {
     keyword: string
     text: string
   }
-  export function decode(chunk: {
-    name: string
-    data: Uint8Array
-  }): DecodedText
+  export function decode(chunk: { name: string; data: Uint8Array }): DecodedText
 }

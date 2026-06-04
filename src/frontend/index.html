@@ -1,459 +1,119 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>pi rp-engine</title>
-    <style>
-      :root {
-        --bg: #0d0d0d;
-        --surface: #1a1a1a;
-        --border: #2a2a2a;
-        --fg: #c0c0c0;
-        --fg-dim: #606060;
-        --accent: #4af;
-        --green: #4caf50;
-        --yellow: #ffc107;
-        --red: #f44336;
-        --font: "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
-        --sidebar-w: 280px;
-      }
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-      }
-      html,
-      body {
-        height: 100%;
-        background: var(--bg);
-        color: var(--fg);
-        font-family: var(--font);
-        font-size: 14px;
-      }
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>pi rp-engine</title>
+<link rel="stylesheet" href="style.css" />
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.9/dist/cdn.min.js"></script>
+<script defer src="app.js"></script>
+</head>
+<body>
 
-      .app {
-        display: flex;
-        height: 100vh;
-      }
-
-      /* ---- Sidebar ---- */
-      .sidebar {
-        width: var(--sidebar-w);
-        background: var(--surface);
-        border-right: 1px solid var(--border);
-        display: flex;
-        flex-direction: column;
-        flex-shrink: 0;
-      }
-      .sidebar-header {
-        padding: 16px;
-        border-bottom: 1px solid var(--border);
-        font-size: 13px;
-        color: var(--fg-dim);
-        letter-spacing: 1px;
-      }
-      .sidebar-header strong {
-        color: var(--accent);
-        font-weight: 600;
-      }
-      .sidebar-content {
-        flex: 1;
-        overflow-y: auto;
-        padding: 12px;
-      }
-      .stat-group {
-        margin-bottom: 16px;
-      }
-      .stat-label {
-        font-size: 11px;
-        color: var(--fg-dim);
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        margin-bottom: 6px;
-      }
-      .stat-row {
-        display: flex;
-        justify-content: space-between;
-        padding: 3px 0;
-        font-size: 13px;
-      }
-      .stat-row .val {
-        color: var(--accent);
-      }
-      .stat-row .val.green {
-        color: var(--green);
-      }
-      .stat-row .val.yellow {
-        color: var(--yellow);
-      }
-      .stat-row .val.red {
-        color: var(--red);
-      }
-      .sidebar-footer {
-        padding: 12px 16px;
-        border-top: 1px solid var(--border);
-        font-size: 11px;
-        color: var(--fg-dim);
-      }
-      .sidebar-footer .dot {
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        margin-right: 6px;
-      }
-      .sidebar-footer .dot.on {
-        background: var(--green);
-      }
-      .sidebar-footer .dot.off {
-        background: var(--red);
-      }
-
-      /* ---- Main ---- */
-      .main {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-      }
-      .chat-header {
-        padding: 12px 20px;
-        border-bottom: 1px solid var(--border);
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        font-size: 13px;
-      }
-      .chat-header .session-id {
-        color: var(--fg-dim);
-      }
-      .chat-header .session-id span {
-        color: var(--accent);
-      }
-      .chat-header .btn {
-        margin-left: auto;
-        background: none;
-        border: 1px solid var(--border);
-        color: var(--fg);
-        padding: 4px 12px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-family: var(--font);
-        font-size: 12px;
-      }
-      .chat-header .btn:hover {
-        border-color: var(--accent);
-        color: var(--accent);
-      }
-
-      .messages {
-        flex: 1;
-        overflow-y: auto;
-        padding: 20px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-      .msg {
-        line-height: 1.6;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      .msg.system {
-        color: var(--fg-dim);
-        font-style: italic;
-        font-size: 12px;
-      }
-      .msg.user {
-        color: var(--fg);
-      }
-      .msg.user::before {
-        content: "❯ ";
-        color: var(--green);
-      }
-      .msg.assistant {
-        color: var(--accent);
-      }
-      .msg.assistant::before {
-        content: "◆ ";
-        color: var(--accent);
-      }
-      .msg.cmd {
-        color: var(--yellow);
-        font-size: 12px;
-      }
-      .msg.cmd::before {
-        content: "⚡ ";
-      }
-      .msg.error {
-        color: var(--red);
-      }
-      .msg.sep {
-        border-top: 1px solid var(--border);
-        margin: 12px 0;
-      }
-
-      .input-area {
-        padding: 12px 20px;
-        border-top: 1px solid var(--border);
-        display: flex;
-        gap: 8px;
-      }
-      .input-area input {
-        flex: 1;
-        background: var(--surface);
-        border: 1px solid var(--border);
-        color: var(--fg);
-        padding: 10px 14px;
-        border-radius: 4px;
-        font-family: var(--font);
-        font-size: 14px;
-        outline: none;
-      }
-      .input-area input:focus {
-        border-color: var(--accent);
-      }
-      .input-area input::placeholder {
-        color: var(--fg-dim);
-      }
-      .input-area button {
-        background: var(--accent);
-        color: #000;
-        border: none;
-        padding: 10px 20px;
-        border-radius: 4px;
-        cursor: pointer;
-        font-family: var(--font);
-        font-weight: 600;
-        font-size: 13px;
-      }
-      .input-area button:hover {
-        opacity: 0.85;
-      }
-
-      .status-bar {
-        padding: 6px 20px;
-        border-top: 1px solid var(--border);
-        font-size: 11px;
-        color: var(--fg-dim);
-        display: flex;
-        gap: 20px;
-      }
-      .status-bar span .v {
-        color: var(--accent);
-      }
-
-      @media (max-width: 768px) {
-        .sidebar {
-          display: none;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <div class="app" id="app">
-      <aside class="sidebar">
-        <div class="sidebar-header"><strong>pi</strong> rp-engine</div>
-        <div class="sidebar-content" id="sidebarContent">
-          <div class="stat-group">
-            <div class="stat-label">Session</div>
-            <div class="stat-row"><span>ID</span><span class="val" id="s-sid">—</span></div>
-            <div class="stat-row">
-              <span>History</span><span class="val" id="s-history">0</span>
-            </div>
-            <div class="stat-row"><span>Phase</span><span class="val" id="s-phase">idle</span></div>
-          </div>
-          <div class="stat-group">
-            <div class="stat-label">Cards</div>
-            <div class="stat-row">
-              <span>Activated</span><span class="val" id="s-cards">0</span>
-            </div>
-          </div>
-          <div class="stat-group">
-            <div class="stat-label">Pipeline</div>
-            <div class="stat-row"><span>Nodes</span><span class="val" id="s-nodes">0</span></div>
-            <div class="stat-row">
-              <span>Degraded</span><span class="val" id="s-degraded">no</span>
-            </div>
-          </div>
-          <div class="stat-group">
-            <div class="stat-label">Connection</div>
-            <div class="stat-row">
-              <span>API</span><span class="val green" id="s-api">connected</span>
-            </div>
+<div
+  class="app"
+  x-data="chat"
+  x-init="ensureSession()"
+  @keydown.escape="sidebarCollapsed = true"
+>
+  <!-- ==== Card Selection (no session) ==== -->
+  <div class="card-select" x-show="!sessionId">
+    <div class="card-select-header">
+      <h1><strong>pi</strong> rp-engine</h1>
+      <p class="fade">选择角色卡开始对话</p>
+    </div>
+    <div class="card-list" x-show="cards.length > 0">
+      <template x-for="card in cards" :key="card.id">
+        <div class="card-item" @click="selectCard(card.id)">
+          <div class="card-item-name" x-text="card.name"></div>
+          <div class="card-item-meta">
+            <span class="tag" x-text="card.id"></span>
+            <template x-for="tag in (card.tags || [])" :key="tag">
+              <span class="tag" x-text="tag"></span>
+            </template>
+            <span class="tag dim" x-show="card.hasSkills">skills ready</span>
           </div>
         </div>
-        <div class="sidebar-footer">
-          <span class="dot on" id="s-dot"></span><span id="s-footer">engine ready</span>
-        </div>
-      </aside>
+      </template>
+    </div>
+    <div class="card-list-empty" x-show="cards.length === 0 && !loadingCards">
+      <p>暂无角色卡</p>
+      <p class="fade">通过 Card Importer 导入 .png / .json 角色卡</p>
+    </div>
+    <div x-show="loadingCards" class="loading-bar"></div>
+  </div>
 
-      <div class="main">
-        <div class="chat-header">
-          <span>💬</span>
-          <span class="session-id">session: <span id="headerSession">—</span></span>
-          <button class="btn" onclick="newSession()">+ New</button>
-          <button class="btn" onclick="clearMessages()">Clear</button>
-        </div>
-        <div class="messages" id="messages">
-          <div class="msg system">PI RP Engine — 输入消息开始角色扮演，或输入 /help 查看命令</div>
-        </div>
-        <div class="input-area">
-          <input
-            type="text"
-            id="input"
-            placeholder="输入消息或命令..."
-            autofocus
-            onkeydown="if (event.key === 'Enter') send()"
-          />
-          <button onclick="send()">Send</button>
-        </div>
-        <div class="status-bar">
-          <span>tokens: <span class="v" id="sb-tokens">0</span></span>
-          <span>turns: <span class="v" id="sb-turns">0</span></span>
-          <span id="sb-info">ready</span>
-        </div>
+  <!-- ==== Sidebar ==== -->
+  <aside class="sidebar" id="sidebar" :class="{ collapsed: sidebarCollapsed }" x-show="sessionId">
+    <div class="sidebar-header"><strong>pi</strong> rp-engine</div>
+    <div class="sidebar-content">
+      <div class="stat-group">
+        <div class="stat-label">Card</div>
+        <div class="stat-row"><span>Name</span><span class="val" x-text="cardName">—</span></div>
+        <div class="stat-row"><span>ID</span><span class="val" x-text="selectedCardId">—</span></div>
+      </div>
+      <div class="stat-group">
+        <div class="stat-label">Session</div>
+        <div class="stat-row"><span>ID</span><span class="val" x-text="shortId">—</span></div>
+        <div class="stat-row"><span>History</span><span class="val" x-text="historyCount">0</span></div>
+        <div class="stat-row"><span>Phase</span><span class="val" x-text="phase">idle</span></div>
+      </div>
+      <div class="stat-group">
+        <div class="stat-label">Pipeline</div>
+        <div class="stat-row"><span>Nodes</span><span class="val" x-text="nodeCount">0</span></div>
+        <div class="stat-row"><span>Degraded</span><span class="val" x-text="degraded">no</span></div>
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <span class="dot" :class="statusDot"></span><span x-text="statusText">engine ready</span>
+    </div>
+  </aside>
+
+  <!-- ==== Main ==== -->
+  <div class="main" x-show="sessionId">
+    <div class="chat-header">
+      <span><span class="accent" x-text="cardName">—</span> · <span class="fade" x-text="shortId">—</span></span>
+      <div class="header-actions">
+        <button class="btn" @click="newSession">+ New</button>
+        <button class="btn" @click="clearMessages">Clear</button>
+        <button class="btn" @click="sidebarCollapsed = !sidebarCollapsed">☰</button>
       </div>
     </div>
 
-    <script>
-      const API = ""
-      let sessionId = localStorage.getItem("rp-session") || ""
-      let turnCount = 0
+    <!-- Messages -->
+    <div class="messages" id="messages" x-ref="messages">
+      <template x-for="(msg, i) in messages" :key="i">
+        <div
+          x-show="msg.show !== false"
+          x-transition.opacity.scale.origin-top
+          :class="`msg ${msg.type}`"
+          x-text="msg.text"
+        ></div>
+      </template>
 
-      // ---- Session ----
-      async function ensureSession() {
-        if (sessionId) {
-          const r = await fetch(`${API}/session/${sessionId}`)
-          if (r.ok) return
-        }
-        const r = await fetch(`${API}/session`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        })
-        const data = await r.json()
-        sessionId = data.sessionId
-        localStorage.setItem("rp-session", sessionId)
-        document.getElementById("headerSession").textContent = sessionId
-        document.getElementById("s-sid").textContent = sessionId
-        addMsg("system", `Session 创建: ${sessionId}`)
-      }
+      <div x-show="loading" class="loading-bar"></div>
+    </div>
 
-      // ---- Messages ----
-      function addMsg(type, text) {
-        const el = document.createElement("div")
-        el.className = `msg ${type}`
-        el.textContent = text
-        document.getElementById("messages").appendChild(el)
-        el.scrollIntoView({ behavior: "smooth" })
-      }
+    <!-- Input -->
+    <div class="input-area">
+      <input
+        type="text"
+        x-model="input"
+        @keydown.enter="send"
+        placeholder="输入消息或 /command…"
+        autofocus
+      />
+      <button id="btnSend" @click="send" :disabled="loading">Send</button>
+    </div>
 
-      // ---- Send ----
-      async function send() {
-        const input = document.getElementById("input")
-        const text = input.value.trim()
-        if (!text) return
-        input.value = ""
+    <!-- Status bar -->
+    <div class="status-bar">
+      <span>tokens: <span class="v" x-text="tokens">0</span></span>
+      <span>turns: <span class="v" x-text="historyCount">0</span></span>
+      <span class="fade" x-text="'ready'"></span>
+    </div>
+  </div>
+</div>
 
-        if (!sessionId) await ensureSession()
-
-        // 命令处理
-        if (text.startsWith("/")) {
-          addMsg("cmd", text)
-          await handleCommand(text)
-          return
-        }
-
-        addMsg("user", text)
-        setStatus("thinking...")
-
-        try {
-          const r = await fetch(`${API}/session/${sessionId}/turn`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: text }),
-          })
-          if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`)
-          const data = await r.json()
-          turnCount = data.turn
-          addMsg(
-            "assistant",
-            `[装配完成] prompt(${data.prompt.length}chars) | display(${data.display.length}chars)`,
-          )
-          if (data.worldbookTriggered?.length) {
-            addMsg("system", `世界书触发: ${data.worldbookTriggered.map((w) => w.name).join(", ")}`)
-          }
-          if (data.agentActions?.length) {
-            for (const a of data.agentActions) addMsg("system", `Agent: ${a.description}`)
-          }
-          addMsg("sep", "")
-          refreshStatus()
-          setStatus("ready")
-        } catch (err) {
-          addMsg("error", `Error: ${err.message}`)
-          setStatus("error", true)
-        }
-      }
-
-      // ---- Commands ----
-      async function handleCommand(text) {
-        try {
-          const r = await fetch(`${API}/session/${sessionId}/turn`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: text }),
-          })
-          if (!r.ok) throw new Error(`${r.status}`)
-          const data = await r.json()
-          addMsg("cmd", `prompt: ${data.prompt}`)
-          addMsg("sep", "")
-          refreshStatus()
-        } catch (err) {
-          addMsg("error", `Command error: ${err.message}`)
-        }
-      }
-
-      // ---- Status ----
-      async function refreshStatus() {
-        if (!sessionId) return
-        try {
-          const r = await fetch(`${API}/session/${sessionId}`)
-          if (!r.ok) return
-          const data = await r.json()
-          document.getElementById("s-history").textContent = data.historyCount ?? 0
-          document.getElementById("s-phase").textContent = data.phase ?? "—"
-          document.getElementById("s-cards").textContent = data.activeCards ?? 0
-          document.getElementById("sb-turns").textContent = turnCount
-          document.getElementById("headerSession").textContent = sessionId
-        } catch {}
-      }
-
-      function setStatus(msg, isError) {
-        document.getElementById("sb-info").textContent = msg
-        const dot = document.getElementById("s-dot")
-        dot.className = `dot ${isError ? "off" : "on"}`
-        document.getElementById("s-footer").textContent = msg
-      }
-
-      function newSession() {
-        localStorage.removeItem("rp-session")
-        sessionId = ""
-        turnCount = 0
-        document.getElementById("messages").innerHTML =
-          `<div class="msg system">PI RP Engine — 新 session</div>`
-        ensureSession()
-      }
-
-      function clearMessages() {
-        document.getElementById("messages").innerHTML =
-          `<div class="msg system">对话已清空，session 仍在</div>`
-      }
-
-      // ---- Init ----
-      ensureSession()
-      setInterval(refreshStatus, 5000)
-    </script>
-  </body>
+</body>
 </html>

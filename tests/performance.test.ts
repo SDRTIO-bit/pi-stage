@@ -1,17 +1,15 @@
-﻿// ============================================================
+// ============================================================
 // performance.test.ts — 10 轮压测
 // 模拟长 session 下双预算调度、状态持久化的稳定性
+// 使用 createApp() 创建隔离的应用实例
 // ============================================================
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest"
-import { stateStore } from "../src/state-store.js"
-import { cardManager } from "../src/card-manager.js"
-import { contextPipeline, type Collector } from "../src/context/pipeline.js"
+import { createApp } from "../src/composition-root.js"
+import type { App } from "../src/composition-root.js"
 import { createNode } from "../src/context/prompt-node.js"
-import { worldbook } from "../src/worldbook/index.js"
 import { callTool } from "../src/tools.js"
-import { lifecycleBus } from "../src/lifecycle/events.js"
-import { agentPipeline } from "../src/lifecycle/agent-pipeline.js"
+import type { Collector } from "../src/context/pipeline.js"
 import * as fs from "node:fs"
 
 const SESSION_ID = "perf-test-10r"
@@ -29,21 +27,28 @@ interface TurnMetrics {
 }
 
 describe("10 轮压测", () => {
+  let app: App
+
   beforeAll(async () => {
     // 清理上次残留
     if (fs.existsSync("sessions")) {
       fs.rmSync("sessions", { recursive: true })
     }
 
-    // ---- 初始化 ----
-    stateStore.createSession(SESSION_ID)
+    // 使用组合根创建隔离实例（跳过默认种子数据，测试使用自定义数据）
+    app = createApp({
+      seed: { cards: [], worldbook: [], regexHooks: [] },
+    })
 
-    // 注册 3 张卡片
-    cardManager.register({ id: "hero", name: "勇者亚瑟", version: 1, tags: ["pc"] })
-    cardManager.register({ id: "npc-guide", name: "引路精灵", version: 1, tags: ["npc"] })
-    cardManager.register({ id: "npc-merchant", name: "旅行商人", version: 1, tags: ["npc"] })
-    cardManager.activate("hero", SESSION_ID)
-    cardManager.activate("npc-guide", SESSION_ID)
+    // ---- 初始化 ----
+    app.stateStore.createSession(SESSION_ID)
+
+    // 注册测试卡片
+    app.cardManager.register({ id: "hero", name: "勇者亚瑟", version: 1, tags: ["pc"] })
+    app.cardManager.register({ id: "npc-guide", name: "引路精灵", version: 1, tags: ["npc"] })
+    app.cardManager.register({ id: "npc-merchant", name: "旅行商人", version: 1, tags: ["npc"] })
+    app.cardManager.activate("hero", SESSION_ID)
+    app.cardManager.activate("npc-guide", SESSION_ID)
 
     // 世界书：10 条常开 + 10 条触发
     const entries = Array.from({ length: 20 }, (_, i) => {
@@ -59,7 +64,7 @@ describe("10 轮压测", () => {
         category: (isConstant ? "常开设定" : "触发词条") as "常开设定" | "触发词条" | "禁用设定",
       }
     })
-    worldbook.load(entries)
+    app.worldbook.load(entries)
 
     // Collector（模拟 10 个模块申报上下文，总字节远超预算）
     const collectors: Collector[] = [
@@ -77,7 +82,7 @@ describe("10 轮压测", () => {
       {
         name: "card-profile",
         collect: async () =>
-          cardManager.getActiveCards().map((c) =>
+          app.cardManager.getActiveCards().map((c) =>
             createNode({
               layer: "L0-survival",
               source: `card:${c.name}`,
@@ -90,7 +95,7 @@ describe("10 轮压测", () => {
       {
         name: "worldbook-constant",
         collect: async () =>
-          worldbook.getConstantEntries().map((e) =>
+          app.worldbook.getConstantEntries().map((e) =>
             createNode({
               layer: "L1-stable",
               source: "常开设定",
@@ -103,7 +108,7 @@ describe("10 轮压测", () => {
       {
         name: "history-recent",
         collect: async () => {
-          const session = stateStore.getSession(SESSION_ID)
+          const session = app.stateStore.getSession(SESSION_ID)
           const recent = (session?.history ?? []).slice(-6)
           return [
             createNode({
@@ -118,7 +123,7 @@ describe("10 轮压测", () => {
       {
         name: "state-vars",
         collect: async () => {
-          const vars = cardManager.getCardState("hero", SESSION_ID)?.variables ?? {}
+          const vars = app.cardManager.getCardState("hero", SESSION_ID)?.variables ?? {}
           return [
             createNode({
               layer: "L2-enhanced",
@@ -131,10 +136,10 @@ describe("10 轮压测", () => {
         },
       },
     ]
-    for (const c of collectors) contextPipeline.registerCollector(c)
+    for (const c of collectors) app.contextPipeline.registerCollector(c)
 
     // 预算压到 2048/4096 强制触发降级
-    contextPipeline.setBudget({ target: 2048, hard: 4096 })
+    app.contextPipeline.setBudget({ target: 2048, hard: 4096 })
   })
 
   const metrics: TurnMetrics[] = []
@@ -143,7 +148,7 @@ describe("10 轮压测", () => {
     for (let turn = 1; turn <= TURNS; turn++) {
       // ---- 模拟用户输入 ----
       const userMsg = `第${turn}轮：keyword${turn % 10} 我想看看有什么商品`
-      stateStore.appendHistory(SESSION_ID, `user: ${userMsg}`)
+      app.stateStore.appendHistory(SESSION_ID, `user: ${userMsg}`)
 
       // ---- 模拟工具调用（搜索世界书 + 更新状态） ----
       const t0 = performance.now()
@@ -157,19 +162,19 @@ describe("10 轮压测", () => {
 
       // ---- Pipeline ----
       const t1 = performance.now()
-      const result = await contextPipeline.assemble(SESSION_ID)
+      const result = await app.contextPipeline.assemble(SESSION_ID)
       const collectMs = performance.now() - t1
 
       expect(result.phase).toBe("ready")
 
       // ---- 持久化 ----
       const t2 = performance.now()
-      stateStore.persist(SESSION_ID)
+      app.stateStore.persist(SESSION_ID)
       const persistMs = performance.now() - t2
 
       // ---- Agent（turn_end 事件触发） ----
-      await lifecycleBus.emit("turn_end", SESSION_ID, { turn })
-      const agentActions = await agentPipeline.run(SESSION_ID)
+      await app.lifecycleBus.emit("turn_end", SESSION_ID, { turn })
+      const agentActions = await app.agentPipeline.run(SESSION_ID)
 
       // ---- 记录指标 ----
       const m: TurnMetrics = {
@@ -187,12 +192,12 @@ describe("10 轮压测", () => {
       metrics.push(m)
 
       // ---- 状态校验 ----
-      const session = stateStore.getSession(SESSION_ID)
+      const session = app.stateStore.getSession(SESSION_ID)
       expect(session?.history.length).toBe(turn) // 每轮 1 条
 
       // 每 5 轮验证一次持久化恢复
       if (turn % 5 === 0) {
-        const loaded = stateStore.load(SESSION_ID)
+        const loaded = app.stateStore.load(SESSION_ID)
         expect(loaded?.sessionId).toBe(SESSION_ID)
         expect(loaded?.history.length).toBe(turn)
       }
@@ -223,9 +228,9 @@ describe("10 轮压测", () => {
       `平均 persist: ${Math.round(metrics.reduce((s, m) => s + m.persistMs, 0) / TURNS)}ms`,
     )
     console.log(`平均 tool:    ${Math.round(metrics.reduce((s, m) => s + m.toolMs, 0) / TURNS)}ms`)
-    console.log(`历史总量: ${stateStore.getSession(SESSION_ID)?.history.length} 条`)
+    console.log(`历史总量: ${app.stateStore.getSession(SESSION_ID)?.history.length} 条`)
 
     // 清理
-    fs.rmSync("sessions", { recursive: true })
+    if (fs.existsSync("sessions")) fs.rmSync("sessions", { recursive: true })
   })
 })

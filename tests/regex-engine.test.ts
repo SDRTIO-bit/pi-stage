@@ -14,7 +14,14 @@ describe("RegexEngine", () => {
 
   it("applies prompt-phase hooks", () => {
     engine.load([
-      { id: "rx-1", name: "strip thought", pattern: "\\{thought\\}[\\s\\S]*?\\{\\/thought\\}", replacement: "", phase: "prompt", enabled: true },
+      {
+        id: "rx-1",
+        name: "strip thought",
+        pattern: "\\{thought\\}[\\s\\S]*?\\{\\/thought\\}",
+        replacement: "",
+        phase: "prompt",
+        enabled: true,
+      },
     ])
 
     const input = "Hello {thought}secret stuff{/thought} world"
@@ -24,7 +31,14 @@ describe("RegexEngine", () => {
 
   it("applies display-phase hooks", () => {
     engine.load([
-      { id: "rx-img", name: "img tag", pattern: "\\[img:(.+?)\\]", replacement: "![](\\1)", phase: "display", enabled: true },
+      {
+        id: "rx-img",
+        name: "img tag",
+        pattern: "\\[img:(.+?)\\]",
+        replacement: "![](\\1)",
+        phase: "display",
+        enabled: true,
+      },
     ])
 
     const input = "Look [img:photo.png] here"
@@ -35,8 +49,22 @@ describe("RegexEngine", () => {
 
   it("only applies hooks matching the requested phase", () => {
     engine.load([
-      { id: "rx-p", name: "prompt only", pattern: "X", replacement: "Y", phase: "prompt", enabled: true },
-      { id: "rx-d", name: "display only", pattern: "A", replacement: "B", phase: "display", enabled: true },
+      {
+        id: "rx-p",
+        name: "prompt only",
+        pattern: "X",
+        replacement: "Y",
+        phase: "prompt",
+        enabled: true,
+      },
+      {
+        id: "rx-d",
+        name: "display only",
+        pattern: "A",
+        replacement: "B",
+        phase: "display",
+        enabled: true,
+      },
     ])
 
     expect(engine.apply("X A", "prompt")).toBe("Y A")
@@ -45,7 +73,14 @@ describe("RegexEngine", () => {
 
   it("skips disabled hooks", () => {
     engine.load([
-      { id: "rx-off", name: "disabled", pattern: "bad", replacement: "good", phase: "prompt", enabled: false },
+      {
+        id: "rx-off",
+        name: "disabled",
+        pattern: "bad",
+        replacement: "good",
+        phase: "prompt",
+        enabled: false,
+      },
     ])
 
     expect(engine.apply("bad", "prompt")).toBe("bad")
@@ -53,7 +88,15 @@ describe("RegexEngine", () => {
 
   it("filters by cardId when provided", () => {
     engine.load([
-      { id: "rx-card", name: "card specific", pattern: "\\{name\\}", replacement: "Alice", phase: "display", enabled: true, cardId: "hero" },
+      {
+        id: "rx-card",
+        name: "card specific",
+        pattern: "\\{name\\}",
+        replacement: "Alice",
+        phase: "display",
+        enabled: true,
+        cardId: "hero",
+      },
     ])
 
     // Without cardId filter — hook has cardId, so should only match when cardId matches
@@ -65,33 +108,68 @@ describe("RegexEngine", () => {
   })
 
   it("load hooks replace previous ones", () => {
-    engine.load([{ id: "rx-1", name: "a", pattern: "X", replacement: "Y", phase: "prompt", enabled: true }])
-    engine.load([{ id: "rx-2", name: "b", pattern: "A", replacement: "B", phase: "prompt", enabled: true }])
+    engine.load([
+      { id: "rx-1", name: "a", pattern: "X", replacement: "Y", phase: "prompt", enabled: true },
+    ])
+    engine.load([
+      { id: "rx-2", name: "b", pattern: "A", replacement: "B", phase: "prompt", enabled: true },
+    ])
     expect(engine.getHooks()).toHaveLength(1)
     expect(engine.getHooks()[0].id).toBe("rx-2")
   })
 
   it("loadForCard appends card-scoped hooks", () => {
-    engine.load([{ id: "rx-1", name: "global", pattern: "X", replacement: "Y", phase: "prompt", enabled: true }])
-    engine.loadForCard("hero", [{ id: "rx-2", name: "hero-only", pattern: "A", replacement: "B", phase: "prompt", enabled: true }])
+    engine.load([
+      {
+        id: "rx-1",
+        name: "global",
+        pattern: "X",
+        replacement: "Y",
+        phase: "prompt",
+        enabled: true,
+      },
+    ])
+    engine.loadForCard("hero", [
+      {
+        id: "rx-2",
+        name: "hero-only",
+        pattern: "A",
+        replacement: "B",
+        phase: "prompt",
+        enabled: true,
+      },
+    ])
     expect(engine.getHooks()).toHaveLength(2)
     expect(engine.getHooks()[1].cardId).toBe("hero")
   })
 
   it("clear removes all hooks", () => {
-    engine.load([{ id: "rx-1", name: "a", pattern: "X", replacement: "Y", phase: "prompt", enabled: true }])
+    engine.load([
+      { id: "rx-1", name: "a", pattern: "X", replacement: "Y", phase: "prompt", enabled: true },
+    ])
     engine.clear()
     expect(engine.getHooks()).toHaveLength(0)
   })
 
   it("handles invalid regex gracefully", () => {
-    engine.load([{ id: "rx-bad", name: "bad", pattern: "[invalid(", replacement: "", phase: "prompt", enabled: true }])
+    engine.load([
+      {
+        id: "rx-bad",
+        name: "bad",
+        pattern: "[invalid(",
+        replacement: "",
+        phase: "prompt",
+        enabled: true,
+      },
+    ])
     expect(() => engine.apply("test", "prompt")).not.toThrow()
     expect(engine.apply("test", "prompt")).toBe("test")
   })
 
   it("empty input returns empty", () => {
-    engine.load([{ id: "rx-1", name: "a", pattern: "X", replacement: "Y", phase: "prompt", enabled: true }])
+    engine.load([
+      { id: "rx-1", name: "a", pattern: "X", replacement: "Y", phase: "prompt", enabled: true },
+    ])
     expect(engine.apply("", "prompt")).toBe("")
   })
 })

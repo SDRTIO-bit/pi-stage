@@ -1,12 +1,16 @@
 /**
- * RP Engine - RP Web 服务器（简化版）
+ * RP Engine - RP Web 服务器
  *
- * HTTP 静态文件服务 + WebSocket 消息转发 + 卡片/会话数据。
+ * HTTP 静态文件服务 + WebSocket 消息转发 + 卡片/会话数据 + 命令执行。
  */
 
-import { readFileSync, existsSync, readdirSync, statSync } from "node:fs"
-import { join, extname } from "node:path"
-import { initCardManager, getRegistry, getActiveCardIds, getCardName, activateCards } from "./card-manager.js"
+import { readFileSync, existsSync, readdirSync, statSync, createReadStream } from "node:fs"
+import { join, extname, basename } from "node:path"
+import { homedir } from "node:os"
+import { createInterface } from "node:readline"
+import { exec } from "node:child_process"
+import type { CardManager } from "./card-manager.js"
+import type { StateStore } from "./state-store.js"
 
 /** 最小 pi API 类型声明 */
 interface PiAPI {
@@ -22,7 +26,13 @@ const MIME: Record<string, string> = {
   ".json": "application/json",
 }
 
-export function createRPWebServer(pi: PiAPI, getStateDir: () => string) {
+export function createRPWebServer(
+  pi: PiAPI,
+  getStateDir: () => string,
+  cardManager: CardManager,
+  stateStore: StateStore,
+  getSessionId: () => string,
+) {
   const RP_PORT = parseInt(process.env.RP_WEB_PORT || "3012")
 
   let rpServer: ReturnType<typeof import("node:http").createServer> | null = null
@@ -30,7 +40,9 @@ export function createRPWebServer(pi: PiAPI, getStateDir: () => string) {
   const rpClients = new Set<any>()
   let latestCtx: any = null
 
-  function setLatestCtx(ctx: any) { latestCtx = ctx }
+  function setLatestCtx(ctx: any) {
+    latestCtx = ctx
+  }
 
   function getRpWebDir(): string {
     return join(getStateDir(), "extensions", "rp-web")
@@ -39,37 +51,67 @@ export function createRPWebServer(pi: PiAPI, getStateDir: () => string) {
   function broadcastToRP(data: any) {
     const json = JSON.stringify(data)
     for (const client of rpClients) {
-      if (client.readyState === 1) { try { client.send(json) } catch { /* ignore */ } }
+      if (client.readyState === 1) {
+        try { client.send(json) } catch { /* ignore */ }
+      }
     }
   }
 
   function sendToRP(ws: any, data: any) {
-    if (ws.readyState === 1) { try { ws.send(JSON.stringify(data)) } catch { /* ignore */ } }
+    if (ws.readyState === 1) {
+      try { ws.send(JSON.stringify(data)) } catch { /* ignore */ }
+    }
   }
 
   function serveFile(urlPath: string, res: any, rpToken?: string) {
     let cleanPath = urlPath.split("?")[0]
     if (cleanPath === "/") cleanPath = "rp-web.html"
     if (cleanPath.startsWith("/")) cleanPath = cleanPath.slice(1)
-    if (cleanPath === "favicon.ico") { res.writeHead(204); res.end(); return }
+    if (cleanPath === "favicon.ico") {
+      res.writeHead(204)
+      res.end()
+      return
+    }
 
     const rpWebDir = getRpWebDir()
     const filePath = join(rpWebDir, cleanPath)
-    if (!filePath.startsWith(rpWebDir)) { res.writeHead(403); res.end("Forbidden"); return }
-    if (!existsSync(filePath)) { res.writeHead(404); res.end("Not Found"); return }
+    if (!filePath.startsWith(rpWebDir)) {
+      res.writeHead(403)
+      res.end("Forbidden")
+      return
+    }
+    if (!existsSync(filePath)) {
+      res.writeHead(404)
+      res.end("Not Found")
+      return
+    }
 
     const ext = extname(filePath).toLowerCase()
     let content = readFileSync(filePath)
     if (ext === ".html" && rpToken) {
-      content = Buffer.from(content.toString().replace("</head>", `<script>window.RP_TOKEN="${rpToken}";</script></head>`))
+      content = Buffer.from(
+        content.toString().replace(
+          "</head>",
+          `<script>window.RP_TOKEN="${rpToken}";</script></head>`,
+        ),
+      )
     }
-    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream" })
+    res.writeHead(200, {
+      "Content-Type": MIME[ext] || "application/octet-stream",
+      "Cache-Control": "no-cache, no-store, must-revalidate",
+    })
     res.end(content)
   }
 
   function registerEventForwarding() {
-    const rpEventTypes = ["agent_start", "agent_end", "turn_end", "message_start", "message_update", "message_end"] as const
-    const STEER_PREFIXES = ["[系统", "[工具流程检查]", "[叙事校准]", "[当前状态同步]", "[扮演边界确认]"]
+    const rpEventTypes = [
+      "agent_start", "agent_end", "turn_end",
+      "message_start", "message_update", "message_end",
+    ] as const
+    const STEER_PREFIXES = [
+      "[系统", "[工具流程检查]", "[叙事校准]",
+      "[当前状态同步]", "[扮演边界确认]",
+    ]
 
     for (const eventType of rpEventTypes) {
       pi.on(eventType as string, (event: any) => {
@@ -83,48 +125,196 @@ export function createRPWebServer(pi: PiAPI, getStateDir: () => string) {
     }
   }
 
-  /** 扫描 sessions 目录下的 .jsonl 文件 */
-  function scanSessions(stateDir: string) {
+  // ========== PI 原生会话目录 ==========
+
+  /** 将 cwd 编码为 PI session 目录名 */
+  function encodeCwd(cwd: string): string {
+    const encoded = cwd
+      .replace(/:\\/g, "--")   // Windows 盘符: F:\ → F--
+      .replace(/[\/\\]/g, "-") // 路径分隔符 → -
+      .replace(/:/g, "")       // 残留冒号
+    return "--" + encoded + "--"
+  }
+
+  function getPiSessionsDir(): string {
+    return join(homedir(), ".pi", "agent", "sessions", encodeCwd(process.cwd()))
+  }
+
+  // ========== 会话扫描与加载 ==========
+
+  /** 从 JSONL 行解析消息文本 */
+  function extractMessageText(entry: any): string | null {
+    if (entry.type !== "message") return null
+    const msg = entry.message
+    if (!msg || msg.role !== "user") return null
+    const content = msg.content
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (block.type === "text" && block.text) return block.text.trim()
+      }
+    } else if (typeof content === "string") {
+      return content.trim()
+    }
+    return null
+  }
+
+  /** 扫描 PI 原生 JSONL session 文件（只读首条 user 消息做预览） */
+  async function scanSessions(_stateDir: string) {
     const sessions: { file: string; size: number; mtime: number; preview: string }[] = []
-    const sessionsDir = join(stateDir, "sessions")
+    const sessionsDir = getPiSessionsDir()
     if (!existsSync(sessionsDir)) return sessions
 
-    const allFiles: { name: string; path: string }[] = []
-    function scanDir(dir: string, prefix: string) {
-      for (const f of readdirSync(dir)) {
-        const fp = join(dir, f)
-        const st = statSync(fp)
-        if (st.isDirectory()) scanDir(fp, prefix ? prefix + "/" + f : f)
-        else if (f.endsWith(".jsonl")) allFiles.push({ name: prefix ? prefix + "/" + f : f, path: fp })
-      }
-    }
-    scanDir(sessionsDir, "")
-    allFiles.sort((a, b) => statSync(b.path).mtimeMs - statSync(a.path).mtimeMs)
+    const files = readdirSync(sessionsDir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .map((f) => ({ name: f, path: join(sessionsDir, f) }))
+      .sort((a, b) => statSync(b.path).mtimeMs - statSync(a.path).mtimeMs)
 
-    for (const { name, path } of allFiles.slice(0, 30)) {
+    for (const { name, path } of files.slice(0, 30)) {
       const st = statSync(path)
       let preview = ""
       try {
-        const lines = readFileSync(path, "utf-8").split("\n").filter(Boolean)
-        for (const line of lines) {
+        const rl = createInterface({
+          input: createReadStream(path, { encoding: "utf-8" }),
+          crlfDelay: Infinity,
+        })
+        for await (const line of rl) {
+          if (!line.trim()) continue
           try {
-            const entry = JSON.parse(line)
-            const msg = entry.message
-            if (msg?.role === "user") {
-              preview = typeof msg.content === "string" ? msg.content.slice(0, 80) : ""
-              break
-            }
-          } catch { /* skip */ }
+            const text = extractMessageText(JSON.parse(line))
+            if (text) { preview = text.slice(0, 80); break }
+          } catch { /* skip malformed line */ }
         }
+        rl.close()
       } catch { /* skip */ }
       sessions.push({ file: name, size: st.size, mtime: st.mtimeMs, preview })
     }
     return sessions
   }
 
+  /**
+   * 从 PI 原生 JSONL 文件流式加载会话，提取 user/assistant 消息。
+   * JSONL 每行一个 Entry，树形结构（id/parentId），逐行解析不全部加载到内存。
+   */
+  async function loadSessionEntries(fileName: string) {
+    const filePath = join(getPiSessionsDir(), fileName)
+    if (!existsSync(filePath)) return null
+
+    try {
+      const entries: any[] = []
+      const rl = createInterface({
+        input: createReadStream(filePath, { encoding: "utf-8" }),
+        crlfDelay: Infinity,
+      })
+
+      for await (const line of rl) {
+        if (!line.trim()) continue
+        let entry: any
+        try { entry = JSON.parse(line) } catch { continue }
+        if (entry.type !== "message") continue
+
+        const msg = entry.message
+        if (!msg) continue
+        const role = msg.role
+        if (role !== "user" && role !== "assistant") continue
+
+        let text = ""
+        const content = msg.content
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === "text" && block.text) text += block.text
+          }
+        } else if (typeof content === "string") {
+          text = content
+        }
+        if (!text.trim()) continue
+
+        entries.push({
+          type: "message",
+          message: { role, content: text },
+        })
+      }
+      rl.close()
+      return entries
+    } catch {
+      return null
+    }
+  }
+
+  // ========== 命令处理 ==========
+
+  function execRPCommand(code: string): string | null {
+    const parts = code.startsWith("/") ? code.slice(1).split(/\s+/) : code.split(/\s+/)
+    const cmd = parts[0]
+    const args = parts.slice(1).join(" ")
+    const sid = getSessionId()
+
+    if (!sid) return "无活跃 Session"
+
+    const session = stateStore.getSession(sid)
+    if (!session) return "无活跃 Session"
+
+    switch (cmd) {
+      case "history": {
+        if (session.history.length === 0) return "(暂无对话历史)"
+        return session.history
+          .map((h, i) => `[${i}] ${h}`)
+          .join("\n")
+      }
+      case "status": {
+        const s = session.runtimeStatus
+        return [
+          "引擎状态",
+          `Session: ${sid}`,
+          `Card: ${session.cardId || "(未选择)"}`,
+          `Phase: ${s.phase}`,
+          `Budget: ${s.currentBudget.target}/${s.currentBudget.hard}`,
+          `Bytes: ${s.totalBytesUsed}`,
+          `Nodes: ${s.nodeCount}`,
+          `Degradation: ${s.degradationApplied ? "YES" : "NO"}`,
+          `History: ${session.history.length} 条`,
+        ].join("\n")
+      }
+      case "card": {
+        if (args === "list" || !args) {
+          const all = cardManager.getAllRegistered()
+          return [
+            `角色卡 (${all.length} 张)`,
+            ...all.map((c) => `  ${c.id}: ${c.name}`),
+          ].join("\n")
+        }
+        return `子命令: /card list`
+      }
+      case "rp-cards": {
+        const all = cardManager.getAllRegistered()
+        return [
+          `角色卡 (${all.length} 张)`,
+          ...all.map((c) => `  ${c.id}: ${c.name}`),
+        ].join("\n")
+      }
+      // 以下命令转发给 PI 引擎（memory 系统等）
+      case "memory_stats":
+      case "memory_search":
+      case "memory_remember":
+      case "memory_lessons":
+      case "knowledge_search":
+      case "rp-mode":
+      case "rp":
+        pi.sendUserMessage(code)
+        return null // 结果通过 PI 事件返回
+      default:
+        return `未知命令: /${cmd}`
+    }
+  }
+
+  // ========== WebSocket 消息路由 ==========
+
   async function handleRPCommand(ws: any, command: any) {
-    const ok = (cmd: string, data?: unknown) => ({ type: "response", command: cmd, success: true, id: command.id, data })
-    const err = (cmd: string, msg: string) => ({ type: "response", command: cmd, success: false, error: msg, id: command.id })
+    const ok = (cmd: string, data?: unknown) => ({
+      type: "response", command: cmd, success: true, id: command.id, data,
+    })
+    const err = (cmd: string, msg: string) => ({
+      type: "response", command: cmd, success: false, error: msg, id: command.id,
+    })
 
     try {
       switch (command.type) {
@@ -138,46 +328,126 @@ export function createRPWebServer(pi: PiAPI, getStateDir: () => string) {
           sendToRP(ws, ok("abort"))
           break
         }
+
         // ---- 卡片管理 ----
         case "list_cards": {
-          const reg = getRegistry()
-          const activeIds = getActiveCardIds()
+          const reg = cardManager.getRegistry()
+          const activeIds = cardManager.getActiveCardIds()
           const cards = Object.entries(reg.cards).map(([id, entry]) => ({
-            id, name: getCardName(id), active: activeIds.includes(id),
-            importedAt: entry.imported_at || "", dir: entry.dir || "",
+            id,
+            name: cardManager.getCardName(id),
+            active: activeIds.includes(id),
+            importedAt: entry.imported_at || "",
+            dir: entry.dir || "",
           }))
           sendToRP(ws, { type: "card_list", cards, activeIds })
           break
         }
         case "activate_cards": {
           const cardIds: string[] = command.cardIds || []
-          if (cardIds.length === 0) { sendToRP(ws, err("activate_cards", "no card ids")); break }
-          const activated = activateCards(cardIds)
-          const names = activated.map((id) => getCardName(id))
+          if (cardIds.length === 0) {
+            sendToRP(ws, err("activate_cards", "no card ids"))
+            break
+          }
+          const activated = cardManager.activateCards(cardIds)
+          const names = activated.map((id) => cardManager.getCardName(id))
           sendToRP(ws, { type: "cards_activated", cardIds: activated, names, needRestart: true })
           break
         }
-        // ---- 会话列表 ----
+
+        // ---- 会话管理 ----
         case "list_sessions": {
-          const sessions = scanSessions(getStateDir())
+          const sessions = await scanSessions(getStateDir())
           sendToRP(ws, { type: "sessions_list", sessions })
           break
         }
-        // ---- 空响应（前端兼容） ----
-        case "get_rp_state":
-          sendToRP(ws, { type: "rp_state", data: {} })
+        case "load_session": {
+          const file = command.file || ""
+          if (!file) {
+            sendToRP(ws, err("load_session", "no file specified"))
+            break
+          }
+          const entries = await loadSessionEntries(file)
+          if (!entries) {
+            sendToRP(ws, err("load_session", "session not found: " + file))
+            break
+          }
+          sendToRP(ws, { type: "load_session_entries", entries })
           break
-        case "get_append_system":
-          sendToRP(ws, { type: "append_system_content", content: "" })
+        }
+        case "new_session": {
+          // 通过 PI 触发新 session
+          pi.sendUserMessage("/reset")
+          sendToRP(ws, { type: "new_session_started" })
           break
+        }
+
+        // ---- 命令执行 ----
+        case "exec": {
+          const code: string = command.code || ""
+          if (!code) {
+            sendToRP(ws, err("exec", "no command"))
+            break
+          }
+          const result = execRPCommand(code)
+          if (result !== null) {
+            // RP 引擎直接处理的命令 → 立即返回结果
+            sendToRP(ws, {
+              type: "exec_result",
+              success: true,
+              message: result,
+              command: code,
+              id: command.id,
+            })
+          } else {
+            // 转发给 PI 的命令 → 结果通过 PI 事件返回，这里先返回 ok
+            sendToRP(ws, ok("exec"))
+          }
+          break
+        }
+
+        // ---- 状态查询 ----
+        case "get_rp_state": {
+          const sid = getSessionId()
+          const session = sid ? stateStore.getSession(sid) : undefined
+          const cardState = session?.cardId
+            ? session.activatedCards.get(session.cardId)
+            : undefined
+
+          const data: any = {
+            sessionId: sid || "",
+            cardId: session?.cardId || "",
+            cardName: session?.cardId ? cardManager.getCardName(session.cardId) : "",
+            variables: cardState?.variables ?? {},
+            historyLength: session?.history.length ?? 0,
+            phase: session?.runtimeStatus.phase ?? "idle",
+          }
+          sendToRP(ws, { type: "rp_state", data })
+          break
+        }
+        case "get_append_system": {
+          // 读取卡目录下的 APPEND_SYSTEM.md
+          const sid = getSessionId()
+          const session = sid ? stateStore.getSession(sid) : undefined
+          let content = ""
+          if (session?.cardId) {
+            const reg = cardManager.getRegistry()
+            const cardDir = reg.cards[session.cardId]?.dir
+            if (cardDir) {
+              const mdPath = join(cardDir, "APPEND_SYSTEM.md")
+              if (existsSync(mdPath)) {
+                try { content = readFileSync(mdPath, "utf-8") } catch { /* ignore */ }
+              }
+            }
+          }
+          sendToRP(ws, { type: "append_system_content", content })
+          break
+        }
         case "mirror_sync_request":
           sendToRP(ws, { type: "mirror_sync", entries: [], model: null, isStreaming: false })
           break
-        case "load_session":
-        case "new_session":
         case "compact":
-        case "exec":
-          sendToRP(ws, ok(command.type))
+          sendToRP(ws, ok("compact"))
           break
         default:
           sendToRP(ws, err(command.type, "Unknown command: " + command.type))
@@ -186,6 +456,8 @@ export function createRPWebServer(pi: PiAPI, getStateDir: () => string) {
       sendToRP(ws, err(command.type || "unknown", e.message))
     }
   }
+
+  // ========== HTTP 服务器 ==========
 
   async function start(ctx: any) {
     const http = await import("node:http")
@@ -207,7 +479,8 @@ export function createRPWebServer(pi: PiAPI, getStateDir: () => string) {
       if (urlPath !== "/ws") { socket.destroy(); return }
       const urlParams = new URLSearchParams(request.url?.split("?")[1] || "")
       if (urlParams.get("token") !== rpToken) { socket.destroy(); return }
-      rpWss.handleUpgrade(request, socket, head, (ws: any) => rpWss.emit("connection", ws, request))
+      rpWss.handleUpgrade(request, socket, head, (ws: any) =>
+        rpWss.emit("connection", ws, request))
     })
 
     rpWss.on("connection", (ws: any) => {
@@ -222,12 +495,27 @@ export function createRPWebServer(pi: PiAPI, getStateDir: () => string) {
     const host = process.env.RP_WEB_HOST || "0.0.0.0"
     const tryListen = (port: number, max = 10) => {
       rpServer!.listen(port, host, () => {
-        console.log(`[RP-Web] http://${host}:${port}`)
-        try { ctx.ui.notify(`RP Web: http://${host}:${port}`, "info") } catch { /* ignore */ }
+        const displayHost = host === "0.0.0.0" ? "localhost" : host
+        const url = `http://${displayHost}:${port}`
+        console.log(`[RP-Web] ${url}`)
+        try { ctx.ui.notify(`RP Web: ${url}`, "info") } catch { /* ignore */ }
+
+        if (!process.env.RP_NO_BROWSER) {
+          const cmd = process.platform === "win32"
+            ? `start "" "${url}"`
+            : process.platform === "darwin"
+              ? `open "${url}"`
+              : `xdg-open "${url}"`
+          exec(cmd, (err) => {
+            if (err) console.warn("[RP-Web] 自动打开浏览器失败:", err.message)
+          })
+        }
       })
       rpServer!.once("error", (err: any) => {
-        if (err.code === "EADDRINUSE" && port < RP_PORT + max) { rpServer!.removeAllListeners("error"); tryListen(port + 1, max) }
-        else console.error("[RP-Web] 启动失败:", err.message)
+        if (err.code === "EADDRINUSE" && port < RP_PORT + max) {
+          rpServer!.removeAllListeners("error")
+          tryListen(port + 1, max)
+        } else console.error("[RP-Web] 启动失败:", err.message)
       })
     }
     tryListen(RP_PORT)
@@ -236,7 +524,9 @@ export function createRPWebServer(pi: PiAPI, getStateDir: () => string) {
   async function shutdown() {
     if (rpWss) {
       for (const c of rpClients) { try { c.close() } catch { /* ignore */ } }
-      rpClients.clear(); rpWss.close(); rpWss = null
+      rpClients.clear()
+      rpWss.close()
+      rpWss = null
     }
     if (rpServer) { rpServer.close(); rpServer = null }
   }

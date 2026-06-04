@@ -2,11 +2,22 @@ node_modules/
 dist/
 sessions/
 *.log
-# 技能 symlink 目录（源文件在 .agents/skills/）
+# OS generated files
+Thumbs.db
+Desktop.ini
+.DS_Store
+# pi.dev runtime (local)
 .pi/skills/
-# 卡片导入生成物
 .pi/cards/
-# 临时测试脚本
+.pi/sessions/
+.pi/snapshots/
+.pi/memory/
+.pi/agents/
+.pi/presets/
+.pi/settings.json
+# Runtime config (auto-generated on first run)
+.rpconfig.json
+# Temp test scripts
 _test_*.ts
 _import_*.ts
 _verify_*.ts

@@ -1,13 +1,9 @@
 // ============================================================
-// 卡片管理 — 统一版（合并旧内存API + 新文件持久化API）
-//
-// 两套API共存：
-//   - 内存API: register/activate/deactivate/getActiveCards (向后兼容)
-//   - 文件API: initCardManager/activateCards/getCardWorldbookDirs (新)
+// 卡片管理
 // ============================================================
 
 import type { CardMeta, CardState } from "./types.js"
-import { stateStore } from "./state-store.js"
+import { StateStore, stateStore as _defaultStateStore } from "./state-store.js"
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs"
 import { join, basename } from "node:path"
 
@@ -34,10 +30,16 @@ export class CardManager {
   private cachedRegistry: CardRegistryData | null = null
   private memMeta = new Map<string, CardMeta>()
   private activeOrder: string[] = []
+  private _stateStore: StateStore
 
-  constructor(cwd?: string) {
+  private get stateStore(): StateStore {
+    return this._stateStore
+  }
+
+  constructor(cwd?: string, stateStore?: StateStore) {
     this.projectCwd = cwd ?? process.cwd()
     this.registryPath = join(this.projectCwd, ".pi", "cards", "registry.json")
+    this._stateStore = stateStore ?? _defaultStateStore
   }
 
   // ========== 文件持久化 API (from card-manager-new) ==========
@@ -146,14 +148,12 @@ export class CardManager {
     this.memMeta.set(card.id, { ...card, activatedAt: undefined })
   }
 
-  /** 激活卡片（可选写入 session state） */
+  /** 激活卡片（同步内存 + 文件注册表 + 可选 session state） */
   activate(cardId: string, sessionId?: string): void {
     const meta = this.memMeta.get(cardId)
     if (!meta) {
-      // 尝试从文件注册表查找
       const reg = this.getRegistry()
       if (!reg.cards[cardId]) throw new Error(`Card ${cardId} not registered`)
-      // 从文件注册表创建内存条目
       this.memMeta.set(cardId, {
         id: cardId,
         name: this.getCardName(cardId),
@@ -167,8 +167,19 @@ export class CardManager {
       this.activeOrder.push(cardId)
     }
 
+    // 同步到文件注册表
+    try {
+      const reg = this.getRegistry()
+      if (reg.cards[cardId] && !reg.active.includes(cardId)) {
+        reg.active.push(cardId)
+        this.saveRegistry(reg)
+      }
+    } catch {
+      // 文件操作失败不影响内存状态
+    }
+
     if (sessionId) {
-      const session = stateStore.getSession(sessionId)
+      const session = this.stateStore.getSession(sessionId)
       if (session && !session.activatedCards.has(cardId)) {
         session.activatedCards.set(cardId, {
           cardId,
@@ -179,11 +190,22 @@ export class CardManager {
     }
   }
 
-  /** 停用卡片 */
+  /** 停用卡片（同步内存 + 文件注册表） */
   deactivate(cardId: string): void {
     this.activeOrder = this.activeOrder.filter((id) => id !== cardId)
     const meta = this.memMeta.get(cardId)
     if (meta) meta.activatedAt = undefined
+
+    // 同步到文件注册表
+    try {
+      const reg = this.getRegistry()
+      if (reg.active.includes(cardId)) {
+        reg.active = reg.active.filter((id) => id !== cardId)
+        this.saveRegistry(reg)
+      }
+    } catch {
+      // 文件操作失败不影响内存状态
+    }
   }
 
   /** 当前激活卡片列表（合并内存 + 文件注册表） */
@@ -221,7 +243,7 @@ export class CardManager {
 
   /** 读取卡片状态变量（委托给 StateStore） */
   getCardState(cardId: string, sessionId: string): CardState | undefined {
-    return stateStore.getSession(sessionId)?.activatedCards.get(cardId)
+    return this.stateStore.getSession(sessionId)?.activatedCards.get(cardId)
   }
 
   /** 注销卡片 */
@@ -230,64 +252,5 @@ export class CardManager {
     this.memMeta.delete(cardId)
   }
 }
-
-// ============================================================
-// 模块级函数（from card-manager-new，向后兼容）
-// ============================================================
-
-let _defaultInstance: CardManager | null = null
-
-function getInstance(): CardManager {
-  if (!_defaultInstance) throw new Error("CardManager 未初始化，请先调用 initCardManager(cwd)")
-  return _defaultInstance
-}
-
-export function initCardManager(cwd: string): void {
-  _defaultInstance = new CardManager(cwd)
-}
-
-export function getRegistry(): CardRegistryData {
-  return getInstance().getRegistry()
-}
-
-export function saveRegistry(registry: CardRegistryData): void {
-  getInstance().saveRegistry(registry)
-}
-
-export function getActiveCardIds(): string[] {
-  return getInstance().getActiveCardIds()
-}
-
-export function getActiveCards(): CardEntry[] {
-  return getInstance()
-    .getRegistry()
-    .active.map((id) => getInstance().getRegistry().cards[id])
-    .filter((c): c is CardEntry => c !== undefined)
-}
-
-export function getCardWorldbookDirs(): string[] {
-  return getInstance().getCardWorldbookDirs()
-}
-
-export function getCardWorldbookDir(cardId: string): string | null {
-  return getInstance().getCardWorldbookDir(cardId)
-}
-
-export function activateCards(cardIds: string[]): string[] {
-  return getInstance().activateCards(cardIds)
-}
-
-export function deactivateCards(cardIds: string[]): void {
-  getInstance().deactivateCards(cardIds)
-}
-
-export function setActiveCard(cardId: string): boolean {
-  return getInstance().setActiveCard(cardId)
-}
-
-export function getCardName(cardId: string): string {
-  return getInstance().getCardName(cardId)
-}
-
-/** 旧版单例（内存模式，供 server.ts / tests / examples 使用） */
+/** @deprecated 使用组合根 `createApp()` 或 `new CardManager(cwd, stateStore)` 替代 */
 export const cardManager = new CardManager()

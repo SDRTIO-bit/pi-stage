@@ -1,26 +1,30 @@
-﻿// ============================================================
+// ============================================================
 // Session-first 状态存储
 // PI session 事件是权威源，文件是加速缓存。
-// 每个 session 独立目录：sessions/<sessionId>/
-// 不依赖文件系统一致性，branch 切换时从 session 重建状态。
+// 持久化抽象通过 StorageProvider 接口实现，支持文件系统/内存切换。
 // ============================================================
 
 import type { CardState, SessionState } from "./types.js"
-import * as fs from "node:fs"
-import * as path from "node:path"
-
-const SESSIONS_ROOT = "sessions"
+import { type StorageProvider, FileSystemStorage } from "./infrastructure/storage-provider.js"
 
 export class StateStore {
   private sessions = new Map<string, SessionState>()
   private dirtyCards = new Set<string>()
+  private _storage: StorageProvider
 
-  private sessionDir(sessionId: string): string {
-    return path.join(SESSIONS_ROOT, sessionId)
+  constructor(storage?: string | StorageProvider) {
+    if (typeof storage === "string") {
+      this._storage = new FileSystemStorage(storage)
+    } else if (storage) {
+      this._storage = storage
+    } else {
+      this._storage = new FileSystemStorage("sessions")
+    }
   }
 
-  private statePath(sessionId: string): string {
-    return path.join(this.sessionDir(sessionId), "state.json")
+  /** 获取底层 StorageProvider */
+  get storage(): StorageProvider {
+    return this._storage
   }
 
   /** 创建或恢复 session */
@@ -28,6 +32,7 @@ export class StateStore {
     const now = Date.now()
     const session: SessionState = {
       sessionId,
+      cardId: fromSnapshot?.cardId ?? "",
       startedAt: fromSnapshot?.startedAt ?? now,
       activatedCards: fromSnapshot?.activatedCards ?? new Map(),
       history: fromSnapshot?.history ?? [],
@@ -45,7 +50,10 @@ export class StateStore {
   }
 
   getSession(sessionId: string): SessionState | undefined {
-    return this.sessions.get(sessionId)
+    const cached = this.sessions.get(sessionId)
+    if (cached) return cached
+    // 服务重启后从磁盘恢复
+    return this.load(sessionId)
   }
 
   /** 记录事件（权威源） */
@@ -76,13 +84,10 @@ export class StateStore {
     return session
   }
 
-  /** 持久化到磁盘 — 每个 session 独立目录 */
+  /** 持久化到存储 */
   persist(sessionId: string): void {
     const session = this.sessions.get(sessionId)
     if (!session) throw new Error(`Session ${sessionId} not found`)
-
-    const dir = this.sessionDir(sessionId)
-    fs.mkdirSync(dir, { recursive: true })
 
     const data = {
       sessionId: session.sessionId,
@@ -95,28 +100,28 @@ export class StateStore {
       })),
     }
 
-    fs.writeFileSync(this.statePath(sessionId), JSON.stringify(data, null, 2), "utf-8")
+    this._storage.write(sessionId, JSON.stringify(data, null, 2))
   }
 
-  /** 从磁盘恢复 */
+  /** 从存储恢复 */
   load(sessionId: string): SessionState | undefined {
-    const sp = this.statePath(sessionId)
-    if (!fs.existsSync(sp)) return undefined
+    const raw = this._storage.read(sessionId)
+    if (!raw) return undefined
 
     try {
-      const raw = JSON.parse(fs.readFileSync(sp, "utf-8"))
+      const data = JSON.parse(raw)
       const activatedCards = new Map<string, CardState>(
-        (raw.activatedCards ?? []).map((entry: { id: string; state: CardState }) => [
+        (data.activatedCards ?? []).map((entry: { id: string; state: CardState }) => [
           entry.id,
           entry.state,
         ]),
       )
 
       return this.createSession(sessionId, {
-        startedAt: raw.startedAt,
-        history: raw.history ?? [],
+        startedAt: data.startedAt,
+        history: data.history ?? [],
         activatedCards,
-        runtimeStatus: raw.runtimeStatus,
+        runtimeStatus: data.runtimeStatus,
       })
     } catch {
       return undefined
@@ -128,18 +133,11 @@ export class StateStore {
     return this.sessions.get(sessionId)
   }
 
-  /** 列出所有 session 目录 */
+  /** 列出所有 session */
   listSessions(): string[] {
-    try {
-      if (!fs.existsSync(SESSIONS_ROOT)) return []
-      return fs.readdirSync(SESSIONS_ROOT).filter((name: string) => {
-        const statPath = path.join(SESSIONS_ROOT, name, "state.json")
-        return fs.existsSync(statPath)
-      })
-    } catch {
-      return []
-    }
+    return this._storage.list()
   }
 }
 
+/** @deprecated 使用组合根 `createApp()` 或 `new StateStore(storage)` 替代 */
 export const stateStore = new StateStore()

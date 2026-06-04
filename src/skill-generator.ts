@@ -118,7 +118,7 @@ export function generateSkills(
     const filename = getFilename(category)
     const content = entries
       .sort((a, b) => a.priority - b.priority)
-      .map((e) => `## ${e.name}\n${e.content}`)
+      .map((e) => `<!-- source: ${e.id} -->\n## ${e.name}\n${e.content}`)
       .join("\n\n")
 
     skills.push({

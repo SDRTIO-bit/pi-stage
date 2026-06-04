@@ -1796,6 +1796,59 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════
+   Markdown Tables — scrollable on narrow screens
+   ═══════════════════════════════════════════════════════ */
+
+.table-wrapper {
+  margin: 10px 0;
+  overflow-x: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.table-wrapper table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.table-wrapper thead {
+  background: var(--bg-glass);
+  border-bottom: 2px solid var(--border);
+}
+
+.table-wrapper th {
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.table-wrapper td {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  vertical-align: top;
+}
+
+.table-wrapper tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table-wrapper tbody tr:nth-child(even) {
+  background: rgba(128, 128, 128, 0.04);
+}
+
+.table-wrapper tbody tr:hover {
+  background: var(--bg-glass-hover);
+}
+
+/* ═══════════════════════════════════════════════════════
    Code Blocks — glass panel with frosted header
    ═══════════════════════════════════════════════════════ */
 

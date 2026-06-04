@@ -2,318 +2,294 @@
 
 LLM 无关的角色扮演运行时，专注上下文装配、状态管理、世界书→Skill 编译。
 
-## 系统定位 (C4 Context)
+## 系统定位
 
-引擎自身不调用 LLM，而是作为 pi.dev 扩展运行，在 LLM 调用之前准备最优上下文。
+引擎自身不调用 LLM。作为 pi.dev 扩展运行，在 LLM 调用之前装配最优上下文。同时支持独立 HTTP 模式。
 
 ```mermaid
 flowchart TB
-    User[👤 用户] -->|消息| PiDev[pi.dev CLI/Web]
+    User[用户] -->|消息| PiDev[pi.dev CLI/Web]
 
     subgraph External["外部系统"]
-        LLM[🤖 LLM Provider<br/>Claude / GPT / 本地模型]
+        LLM[LLM Provider]
     end
 
     subgraph Boundary["PI RP Engine 边界"]
-        Engine[RP Engine 扩展<br/>上下文装配 + 状态管理<br/>世界书→Skill 编译]
+        Engine[RP Engine 扩展]
     end
 
-    PiDev -->|input 事件| Engine
-    Engine -->|注入 System Prompt + Skill| PiDev
+    PiDev -->|"input / before_agent_start"| Engine
+    Engine -->|"替换 systemPrompt"| PiDev
     PiDev -->|装配后的 Context| LLM
     LLM -->|生成回复| PiDev
-    Engine -->|持久化| Disk[(sessions/)]
-    Engine -->|Skill 文件| Skills[(.pi/skills/rp-engine/)]
+    Engine -->|持久化| Disk[(.pi/sessions/)]
+    Engine -->|Snapshots| Snap[(.pi/snapshots/)]
 ```
 
-## 内部架构 (C4 Container)
+## 内部架构
 
 ```mermaid
 flowchart TB
+    subgraph Composition["组合根"]
+        createApp["createApp() — 唯一装配入口"]
+    end
+
     subgraph Core["核心模块"]
-        direction TB
-        Pipeline[ContextPipeline<br/>collect→prioritize→schedule→render]
-        StateStore[StateStore<br/>session 管理 + 持久化]
+        Pipeline[ContextPipeline<br/>collect→prioritize→schedule→render→trace]
+        StateStore[StateStore<br/>session CRUD + 持久化]
         CardManager[CardManager<br/>卡片注册/激活/隔离]
-        Worldbook[Worldbook<br/>常开设定 + 触发关键词]
-        SkillGen[SkillGenerator<br/>世界书→Skill 分类]
-        Tools[ToolRegistry<br/>read_state/update_state<br/>advance_time/search_worldbook]
-        Commands[CommandRegistry<br/>/card /status /reset<br/>/diag /history]
-        Lifecycle[LifecycleBus<br/>事件总线 + Agent 管线]
-        RegexEngine[RegexEngine<br/>prompt/display 双阶段钩子]
+        Worldbook[Worldbook<br/>keyword + TF-IDF 双检索]
+        SkillGen[CardSkillWriter<br/>世界书→卡专属 Skill]
+        Tools[createPiTools<br/>4 个内置工具 DI 注入]
+        Lifecycle[LifecycleBus<br/>事件总线]
+    end
+
+    subgraph Collectors["ContextPipeline Collectors"]
+        CardBase[card-base — L0 系统提示]
+        FormatRules[format-rules — L0 格式规则]
+        RPSkills[rp-skills — L1 卡专属 5 文件]
+        WorldTrigger[worldbook-trigger — L2 TF-IDF ≤3条]
+        StateVars[state-variables — L1 角色状态]
     end
 
     subgraph External["对外接口"]
-        HTTPServer[HTTP Server :3001<br/>REST API + 静态文件]
-        PiExt[pi.dev 扩展适配<br/>createPiTools / createPiCommands]
-        RPWebServer[RP Web Server :3012<br/>WebSocket + 前端]
+        HTTPServer[HTTP Server]
+        PiExt[pi.dev 扩展适配]
     end
 
-    PiExt --> Tools
-    PiExt --> Commands
-    HTTPServer --> Pipeline
-    HTTPServer --> StateStore
-    HTTPServer --> CardManager
-    HTTPServer --> Worldbook
-    HTTPServer --> Tools
-    HTTPServer --> Lifecycle
+    subgraph Obs["观测系统"]
+        Snapshot[prompt-snapshot<br/>每轮 prompt 完整快照]
+        Analyze[analyze-snapshots.mjs<br/>批量分析脚本]
+    end
 
-    Pipeline --> StateStore
-    Pipeline --> RegexEngine
-    Lifecycle --> StateStore
+    createApp --> Core
+    Pipeline --> Collectors
     Tools --> StateStore
     Tools --> Worldbook
-    CardManager --> StateStore
-    SkillGen --> Worldbook
+    Tools --> Lifecycle
+    PiExt --> Tools
+    HTTPServer --> Pipeline
+    Snapshot --> Snap
 ```
 
 ## 核心管线 (Context Pipeline)
 
-上下文装配是引擎的核心流程，5 阶段流水线：
+5 阶段流水线，每个节点独立 try-catch + fallback：
 
-```mermaid
-flowchart LR
-    A["1. Collect<br/>各模块申报 Node"] --> B["2. Prioritize<br/>按 priority + attentionWeight 排序"]
-    B --> C["3. Schedule<br/>双预算调度"]
-    C --> D["4. Render<br/>组装 prompt + display 两个版本"]
-    D --> E["5. Trace<br/>记录全过程，同步 RuntimeStatus"]
-
-    C -->|"超出预算"| F["降级策略"]
-    F --> F1["drop: 丢弃"]
-    F --> F2["compress: 合并空行"]
-    F --> F3["truncate: 按位截断"]
-    F --> F4["summarize: 提取式摘要"]
 ```
+1. Collect → 各 Collector 申报 PromptNode
+2. Prioritize → 按 priority + attentionWeight 排序
+3. Schedule → 双预算调度 (target / hard)
+4. Render → 输出 prompt + display 两个版本
+5. Trace → 记录全过程 → 同步 RuntimeStatus → logSnapshot
+```
+
+### Collector 注册表
+
+| Collector | 层 | 优先级 | 降级策略 | 内容 |
+|-----------|-----|--------|----------|------|
+| card-base | L0-survival | 0 | drop | 系统提示词 |
+| format-rules | L0-survival | 2 | summarize | 格式规则（来自 FORMAT_RULES.md） |
+| rp-skills | L1-stable | 3-8 | summarize | 卡专属 5 个 skill 文件 |
+| worldbook-trigger | L2-enhanced | 15 | truncate | TF-IDF/关键词 匹配触发条目 |
+| state-variables | L1-stable | 90 | compress | 角色状态变量 |
 
 ### 双预算调度
 
-```mermaid
-flowchart TB
-    Start[Node 进入调度] --> Hard{totalBytes + nodeSize<br/>超出 hard?}
+- `target` (默认 24576 bytes) — 舒适区，超出触发降级
+- `hard` (默认 40960 bytes) — 硬上限，绝对不超
 
-    Hard -->|否| Target{totalBytes + nodeSize<br/>超出 target?}
-    Hard -->|是| CheckStrategy{策略是<br/>summarize?}
-    CheckStrategy -->|是| TrySummary[尝试摘要降级]
-    CheckStrategy -->|否| Drop[丢弃]
+4 种降级策略：drop（丢弃）、compress（压缩空行）、truncate（按比截断）、summarize（提取式摘要）
 
-    TrySummary --> SummaryOK{降级后<br/>≤ hard?}
-    SummaryOK -->|是| Include[纳入]
-    SummaryOK -->|否| Drop
+## 配置系统 (.rpconfig.json)
 
-    Target -->|否| Include
-    Target -->|是| Degrade[应用降级策略]
+首次运行自动生成默认配置：
 
-    Degrade --> DegradeOK{降级成功?}
-    DegradeOK -->|是| Include
-    DegradeOK -->|否| Drop
+```json
+{
+  "token_budget": {
+    "pipeline_target": 24576,
+    "pipeline_hard": 40960,
+    "output_reserve": 4000
+  },
+  "retriever": {
+    "method": "tfidf",
+    "top_k": 3,
+    "max_tokens": 4000,
+    "context_window": 3
+  },
+  "features": {
+    "tfidf_retriever": true,
+    "format_rules_collector": true,
+    "state_collector": true
+  }
+}
 ```
 
-预算模型：`target` = 舒适区（追求不触发降级），`hard` = 硬上限（绝对不能超过）。
+所有新功能通过 Feature Flag 控制，关闭即回退旧行为。
 
-## 生命周期事件
+## 世界书检索
 
-```mermaid
-stateDiagram-v2
-    [*] --> session_start
-    session_start --> idle
-    idle --> input: 用户发消息
-    input --> context_assembly: Engine 装配上下文
-    context_assembly --> before_agent_start: 注入 Skill 文件
-    before_agent_start --> llm_call: pi.dev 调用 LLM
-    llm_call --> message_end: 收到回复
-    message_end --> turn_end: 执行 Agent 管线
-    turn_end --> idle: 等待下一轮
-    idle --> session_shutdown: pi.dev 关闭
-    session_shutdown --> [*]
+双模式，通过 `retriever.method` 切换：
 
-    note right of turn_end: Agent 管线中间件：\n- 脏卡片检测\n- 状态变更摘要\n- (可扩展自定义中间件)
+| 模式 | 算法 | 查询上下文 | 限制 |
+|------|------|-----------|------|
+| `keyword` | 关键词子串匹配 | 最近 1 条用户消息 | top_k 条 |
+| `tfidf` | bigram TF-IDF 余弦相似度 | 最近 N 轮用户消息 | top_k + max_tokens 双限制 |
+
+`searchBySimilarity()` 对无中文的查询自动 fallback 到关键词匹配。
+
+## 卡专属 Skill 系统
+
+```
+卡 worldbook 条目
+  → generateCardSkills()
+    → Phase 1: 常开设定 → generateSkills() → 5 文件
+    → Phase 2: 触发条目 → categorizeEntry() → 追加到对应文件
+      → .pi/cards/{name}/skills/rp-engine/
+          ├── 00-core-rules.md
+          ├── style-protocol.md
+          ├── judgment-system.md
+          ├── variable-protocol.md
+          └── world-context.md
+        → SkillCollector 读取 → Pipeline 注入
 ```
 
-## 全链路时序
+首次激活生成，之后直接复用。`hasCardSkills()` 检查 `00-core-rules.md` 是否存在。
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User
-    participant PiDev as pi.dev
-    participant Engine as RP Engine
-    participant LLM
+## PI 扩展事件流
 
-    User->>PiDev: 发送消息
-    PiDev->>Engine: input 事件
-
-    activate Engine
-    Engine->>Engine: ContextPipeline.assemble()
-    Note right of Engine: collect → prioritize →<br/>schedule → render
-    Engine->>Engine: Worldbook.searchByKeywords()
-    Engine-->>PiDev: System Prompt + Context
-    deactivate Engine
-
-    PiDev->>Engine: before:agent:start
-    Engine-->>PiDev: 注入 Skill 文件
-
-    PiDev->>LLM: 装配后的 Prompt
-    LLM-->>PiDev: 生成回复
-    PiDev->>User: 显示回复
-
-    PiDev->>Engine: turn_end 事件
-    activate Engine
-    Engine->>Engine: AgentPipeline.run()
-    Engine->>Engine: StateStore.persist()
-    Engine->>Engine: SkillGenerator (世界书→Skill)
-    deactivate Engine
+```
+session_start        → 懒初始化兜底 + RP Web 启动
+before_agent_start   → ★ 核心：rpGuard + pipeline.assemble() + PI 指令
+input                → 用户消息记录
+message_end          → 格式纪律检查
+turn_end             → Agent 管线 + 持久化 + logSnapshot
+session_before_compact → 状态变量保护
+session_shutdown     → 最终持久化
 ```
 
-## 数据模型
+懒初始化策略：不依赖 `session_start`（PI 可能不触发），在 `before_agent_start` 首次调用时 init。
 
-```mermaid
-classDiagram
-    class PromptNode {
-        +string id
-        +ContextLayer layer
-        +string source
-        +number priority
-        +number attentionWeight
-        +string content
-        +number byteSize
-        +DegradationStrategy degradationStrategy
-    }
-
-    class SessionState {
-        +string sessionId
-        +number startedAt
-        +Map~string,CardState~ activatedCards
-        +string[] history
-        +RuntimeStatus runtimeStatus
-    }
-
-    class CardMeta {
-        +string id
-        +string name
-        +number version
-        +string description
-        +string[] tags
-        +number activatedAt
-    }
-
-    class CardState {
-        +string cardId
-        +Record variables
-        +number lastUpdated
-    }
-
-    class WorldbookEntry {
-        +string id
-        +string name
-        +string[] keywords
-        +number priority
-        +boolean constant
-        +boolean enabled
-        +string content
-        +string category
-    }
-
-    class RuntimeStatus {
-        +string phase
-        +Budget currentBudget
-        +number totalBytesUsed
-        +number nodeCount
-        +TraceEntry[] trace
-        +boolean degradationApplied
-    }
-
-    SessionState "1" --> "*" CardState
-    SessionState "1" --> "1" RuntimeStatus
-    CardState --> CardMeta: references
+System Prompt 组装：
+```
+rpGuard（最高优先级角色扮演指令）
+  + result.prompt（ContextPipeline 输出：世界观 + Skills + 格式 + 状态）
+  + "---\n## PI 系统指令"
+  + ev.systemPrompt（PI 原始系统指令，含工具声明）
 ```
 
-## 世界书→Skill 编译
+## 一对一模型
 
-```mermaid
-flowchart TB
-    WB[世界书条目] --> Filter{category ==<br/>常开设定?}
+一个 session = 一张卡片：
 
-    Filter -->|是| Classify[内容特征分类]
-    Filter -->|否| Trigger[触发词条<br/>按需搜索]
-
-    Classify --> Rules[规则/禁止/必须<br/>→ 00-core-rules.md]
-    Classify --> Style[格式/语气/画风<br/>→ style-protocol.md]
-    Classify --> Judge[判定/骰子/概率<br/>→ judgment-system.md]
-    Classify --> Var[变量/属性/数值<br/>→ variable-protocol.md]
-    Classify --> Uncat[无法分类<br/>→ 跳过]
-
-    Rules --> Sort[按 priority 排序]
-    Style --> Sort
-    Judge --> Sort
-    Var --> Sort
-
-    Sort --> Generate[生成 Skill 文件<br/>写入 .pi/skills/rp-engine/]
-    Generate --> Inject[before:agent:start<br/>自动注入]
+```
+Session A ─── Card A ──┬── history (独立)
+                        ├── variables (独立)
+                        └── skills (独立)
+Session B ─── Card B ──┬── history (独立)
+                        ├── variables (独立)
+                        └── skills (独立)
 ```
 
 ## 工具系统
 
-| 工具 | 触发 | 功能 |
-|------|------|------|
-| `read_state` | LLM 自动 | 读取激活卡片的状态变量，keys 为空返回全部 |
-| `update_state` | LLM 自动 | 更新卡片状态变量，类型校验 + 脏标记 |
-| `advance_time` | LLM 自动 | 推进游戏内时间 |
-| `search_worldbook` | LLM 自动 | 按关键词搜索触发词条 |
+4 个内置工具，通过 `createPiTools(sessionIdRef, stateStore, lifecycleBus)` DI 注入：
 
-每个工具调用包裹在生命周期事件中：`tool_call` → 执行 → `tool_result`。
-
-## 命令系统
-
-| 命令 | 功能 |
+| 工具 | 功能 |
 |------|------|
-| `/card list` | 列出所有已注册卡片及激活状态 |
-| `/card activate <id>` | 激活指定卡片 |
-| `/card deactivate <id>` | 停用指定卡片 |
-| `/status` | 查看引擎状态 (phase/budget/nodes/degradation) |
-| `/reset` | 清空当前 session 历史 |
-| `/diag prompt` | 查看上下文装配 trace |
-| `/history` | 查看对话历史 |
+| `read_state` | 读取当前激活角色状态变量 |
+| `update_state` | 更新角色状态变量 |
+| `advance_time` | 推进游戏内时间 |
+| `search_worldbook` | 关键词搜索世界书触发词条 |
 
-## 降级策略对比
+每个工具调用包裹生命周期事件：`tool_call` → 执行 → `tool_result`。
 
-| 策略 | 算法 | 适用场景 | 是否丢信息 |
-|------|------|----------|------------|
-| `drop` | 直接丢弃 | 不重要内容 | 全部丢失 |
-| `compress` | 合并多余空行 | 格式化文本 | 仅去空白 |
-| `truncate` | 按字节比截断 | 长文本 | 尾部丢失 |
-| `summarize` | 提取式：前 N 句 + 末尾句 | 多句段文本 | 中间丢失 |
+## 观测系统
+
+- **prompt-snapshot.ts** — 每轮 `before_agent_start` 后写入 `.pi/snapshots/{sid}/{ts}.json`，包含完整 PipelinePhase + collectorBytes 分解
+- **analyze-snapshots.mjs** — 批量分析：token 分布、collector 占比、世界书命中率、降级统计
 
 ## 目录结构
 
 ```
 src/
-├── types.ts                  # 核心类型定义
-├── index.ts                  # 统一导出
-├── card-manager.ts           # 卡片管理（内存 + 文件持久化）
-├── state-store.ts            # Session 状态存储
-├── skill-generator.ts        # 世界书 → Skill 编译
-├── tools.ts                  # AI 工具集（Pi + HTTP 双 API）
-├── registry.ts               # Tool/Command 注册表基类
-├── config.ts                 # .rpconfig.json 配置加载
-├── utils.ts                  # 工具函数 (clamp/deepClone/setNested)
-├── server.ts                 # HTTP 服务 (:3001)
-├── rp-web-server.ts          # RP Web 服务 (:3012)
+├── composition-root.ts        # DI 容器 — createApp() 唯一装配入口
+├── types.ts                   # 核心类型 (SessionState 含 cardId)
+├── state-store.ts             # session 状态存储 (StorageProvider 接口)
+├── card-manager.ts            # 角色卡注册/激活/持久化
+├── config.ts                  # .rpconfig.json 加载 + 默认配置合并
+├── tools.ts                   # createPiTools() + HTTP 适配器
+├── skill-generator.ts         # 世界书条目 → 5 个 skill 文件分类
+├── server.ts                  # HTTP 独立服务入口
+├── rp-web-server.ts           # RP WebSocket 服务器
+│
 ├── context/
-│   ├── prompt-node.ts        # PromptNode 标准封装
-│   ├── scheduler.ts          # 双预算调度器
-│   └── pipeline.ts           # 上下文装配管线
+│   ├── pipeline.ts            # assemble() 主流程 + collectorBytes 报告
+│   ├── scheduler.ts           # 双预算调度器
+│   └── prompt-node.ts         # PromptNode 工厂
+│
+├── collectors/                # ★ 独立 Collector（NEW）
+│   ├── format-rules.ts        # 格式规则 collector
+│   └── state-variables.ts     # 角色状态 collector
+│
 ├── lifecycle/
-│   ├── events.ts             # 事件总线
-│   ├── agent-pipeline.ts     # Agent 中间件管线
-│   └── index.ts              # 生命周期导出
+│   ├── events.ts              # LifecycleBus 事件总线
+│   ├── agent-pipeline.ts      # Agent 中间件管线
+│   └── skill-hooks.ts         # createSkillCollector() 工厂
+│
 ├── worldbook/
-│   └── index.ts              # 世界书系统
+│   └── index.ts               # keyword + TF-IDF 双检索
+│
 ├── cards/
-│   ├── types.ts              # 卡片类型
-│   ├── registry.ts           # 卡片注册表 (JSON)
-│   └── importer.ts           # SillyTavern 兼容导入
+│   ├── types.ts               # CardState, CardMeta
+│   ├── registry.ts            # CardRegistry JSON 持久化
+│   ├── importer.ts            # SillyTavern PNG/JSON 导入
+│   ├── skill-writer.ts        # 卡级 Skill 生成器
+│   └── session-store.ts       # 卡级 Session 存储
+│
 ├── commands/
-│   └── index.ts              # 用户命令
+│   └── index.ts               # 用户命令 (/card /status /reset 等)
+│
+├── observability/             # ★ 观测系统（NEW）
+│   └── prompt-snapshot.ts     # 每轮 prompt 快照写入
+│
+├── infrastructure/
+│   └── storage-provider.ts    # StorageProvider + FileSystemStorage + MemoryStorage
+│
+├── presentation/http/
+│   └── routes/                # session-routes, turn-routes, tool-routes
+│
 └── regex/
-    └── hooks.ts              # 双阶段正则引擎
+    └── hooks.ts               # prompt/display 双阶段正则钩子
+
+.pi/                            # PI 扩展运行时
+├── extensions/rp-engine/
+│   └── index.ts               # PI 扩展入口 (lazy init + system prompt 替换)
+├── cards/{name}/
+│   ├── config.json
+│   ├── state.json
+│   ├── worldbook/             # 卡专属世界书
+│   │   ├── [常开]设定/
+│   │   └── [触发]关键词/
+│   ├── skills/rp-engine/      # 卡专属 Skills（首次激活生成）
+│   └── sessions/              # 卡级 sessions
+├── snapshots/{sid}/           # 观测快照
+└── sessions/                  # 中心化 session 存储
+
+scripts/
+└── analyze-snapshots.mjs      # 快照批量分析工具
+```
+
+## 依赖注入模式
+
+唯一装配入口 `createApp()`，所有服务构造函数注入：
+
+```typescript
+// ✅ 正确
+const app = createApp()
+app.stateStore.createSession(sid)
+
+// ❌ 错误 — 模块单例（已全部标记 @deprecated）
+import { stateStore } from "./state-store.js"
 ```

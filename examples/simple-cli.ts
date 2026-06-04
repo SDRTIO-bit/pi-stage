@@ -1,48 +1,50 @@
-﻿// ============================================================
+// ============================================================
 // simple-cli.ts — 全链路集成 Demo
-// 贯穿 Session → Card → Worldbook → Pipeline → Tool → Agent
+// 贯穿 Session -> Card -> Worldbook -> Pipeline -> Tool -> Agent
 //
 // 运行：npx tsx examples/simple-cli.ts
 // ============================================================
 
-import { stateStore } from "../src/state-store.js"
-import { cardManager } from "../src/card-manager.js"
-import { contextPipeline, type Collector } from "../src/context/pipeline.js"
+import { createApp, activateDefaultCards } from "../src/composition-root.js"
 import { createNode } from "../src/context/prompt-node.js"
-import { worldbook } from "../src/worldbook/index.js"
 import { callTool } from "../src/tools.js"
-import { lifecycleBus } from "../src/lifecycle/events.js"
-import { agentPipeline, type AgentMiddleware } from "../src/lifecycle/agent-pipeline.js"
-import { regexEngine, type RegexHook } from "../src/regex/hooks.js"
 
 async function main() {
   console.log("=== PI RP Engine — 全链路 Demo ===\n")
 
+  // 使用组合根创建所有服务
+  const app = createApp()
+
   // ---- 1. Session ----
   const sessionId = "demo-session-001"
-  stateStore.createSession(sessionId)
+  app.stateStore.createSession(sessionId)
   console.log("[1] Session 创建:", sessionId)
 
   // ---- 2. 卡片注册 & 激活 ----
-  cardManager.register({
+  app.cardManager.register({
     id: "card-npc01",
     name: "旅店老板娘",
     version: 1,
-    tags: ["npc", " tavern"],
+    tags: ["npc", "tavern"],
   })
-  cardManager.register({ id: "card-npc02", name: "神秘旅人", version: 1, tags: ["npc", "quest"] })
-  cardManager.activate("card-npc01", sessionId)
-  cardManager.activate("card-npc02", sessionId)
+  app.cardManager.register({
+    id: "card-npc02",
+    name: "神秘旅人",
+    version: 1,
+    tags: ["npc", "quest"],
+  })
+  app.cardManager.activate("card-npc01", sessionId)
+  app.cardManager.activate("card-npc02", sessionId)
   console.log(
     "[2] 激活卡片:",
-    cardManager
+    app.cardManager
       .getActiveCards()
       .map((c) => c.name)
       .join(", "),
   )
 
   // ---- 3. 世界书 ----
-  worldbook.load([
+  app.worldbook.load([
     {
       id: "wb-001",
       name: "世界观——酒馆",
@@ -74,19 +76,19 @@ async function main() {
       category: "触发词条",
     },
   ])
-  const wbIndex = worldbook.getIndex()
+  const wbIndex = app.worldbook.getIndex()
   console.log(
     `[3] 世界书加载完成：常开 ${wbIndex.constantCount} 条，触发词 ${wbIndex.triggerKeywordsCount} 组`,
   )
 
-  const triggered = worldbook.searchByKeywords("他低声说地下室有秘密")
+  const triggered = app.worldbook.searchByKeywords("他低声说地下室有秘密")
   console.log(
     `    触发搜索命中 ${triggered.length} 条:`,
     triggered.map((e) => `「${e.name}」`).join("、"),
   )
 
   // ---- 4. 注册 Collector（模拟各模块申报上下文） ----
-  const demoCollector: Collector = {
+  const demoCollector = {
     name: "card-base",
     collect: async () => [
       createNode({
@@ -98,7 +100,7 @@ async function main() {
       createNode({
         layer: "L1-stable",
         source: "世界书常开",
-        content: worldbook
+        content: app.worldbook
           .getConstantEntries()
           .map((e) => e.content)
           .join("\n"),
@@ -106,11 +108,11 @@ async function main() {
       }),
     ],
   }
-  contextPipeline.registerCollector(demoCollector)
+  app.contextPipeline.registerCollector(demoCollector)
   console.log("[4] Collector 注册:", demoCollector.name)
 
   // ---- 5. 正则钩子 ----
-  regexEngine.load([
+  app.regexEngine.load([
     {
       id: "rx-thought",
       name: "剥离思考块",
@@ -127,11 +129,11 @@ async function main() {
       phase: "display",
       enabled: true,
     },
-  ] as RegexHook[])
-  console.log("[5] 正则钩子加载:", regexEngine.getHooks().length, "条")
+  ])
+  console.log("[5] 正则钩子加载:", app.regexEngine.getHooks().length, "条")
 
   // ---- 6. Pipeline 装配 ----
-  const result = await contextPipeline.assemble(sessionId)
+  const result = await app.contextPipeline.assemble(sessionId)
   if (result.phase !== "ready") throw new Error(`Pipeline failed: ${result.phase}`)
   console.log(`[6] Pipeline 完成`)
   console.log(`    prompt: ${result.prompt.length} chars`)
@@ -145,16 +147,16 @@ async function main() {
   console.log(`    ${toolResult.slice(0, 120)}...`)
 
   // ---- 8. 生命周期事件 + Agent ----
-  await lifecycleBus.emit("turn_end", sessionId, { round: 1 })
-  const actions = await agentPipeline.run(sessionId)
+  await app.lifecycleBus.emit("turn_end", sessionId, { round: 1 })
+  const actions = await app.agentPipeline.run(sessionId)
   console.log(`[8] Agent 管线完成: ${actions.length} 个动作`)
   for (const a of actions) {
     console.log(`    [${a.type}] ${a.description}`)
   }
 
   // ---- 9. 持久化验证 ----
-  stateStore.persist(sessionId)
-  const loaded = stateStore.load(sessionId)
+  app.stateStore.persist(sessionId)
+  const loaded = app.stateStore.load(sessionId)
   console.log(`[9] 持久化: ${loaded ? "OK (load 成功)" : "FAIL"}`)
 
   console.log("\n=== Demo 结束 ===")

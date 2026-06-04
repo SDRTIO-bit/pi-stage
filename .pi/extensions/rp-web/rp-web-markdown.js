@@ -102,6 +102,39 @@ export function renderMarkdown(text) {
       inList = false;
     }
 
+    // Table (multi-line: header | separator | rows)
+    if (line.startsWith('|') && line.endsWith('|')) {
+      if (inList) { html += `</${listType}>`; inList = false; }
+      if (inBlockquote) { html += '</blockquote>'; inBlockquote = false; }
+
+      const headerCells = parseTableRow(line);
+      if (headerCells.length === 0) continue;
+
+      // Check next line is separator
+      const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
+      if (!isTableSeparator(nextLine)) {
+        html += `<p>${renderInline(line)}</p>`;
+        continue;
+      }
+      i++; // consume separator
+
+      // Collect body rows
+      const bodyRows = [];
+      while (i + 1 < lines.length && lines[i + 1].startsWith('|') && lines[i + 1].endsWith('|')) {
+        i++;
+        const cells = parseTableRow(lines[i]);
+        if (cells.length > 0) bodyRows.push(cells);
+      }
+
+      html += '<div class="table-wrapper"><table>';
+      html += '<thead><tr>' + headerCells.map(c => `<th>${renderInline(c)}</th>`).join('') + '</tr></thead>';
+      html += '<tbody>' + bodyRows.map(row =>
+        '<tr>' + row.map(c => `<td>${renderInline(c)}</td>`).join('') + '</tr>'
+      ).join('') + '</tbody>';
+      html += '</table></div>';
+      continue;
+    }
+
     // Empty line
     if (line.trim() === '') {
       continue;
@@ -116,6 +149,18 @@ export function renderMarkdown(text) {
   if (inBlockquote) html += '</blockquote>';
 
   return html;
+}
+
+function parseTableRow(line) {
+  return line
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map(c => c.trim());
+}
+
+function isTableSeparator(line) {
+  return /^\|[\s\-:]+\|[\s\-:|]+\|$/.test(line);
 }
 
 function renderInline(text) {

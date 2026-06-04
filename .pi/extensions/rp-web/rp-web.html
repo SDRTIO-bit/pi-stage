@@ -405,6 +405,52 @@
       background: #1a5276;
     }
 
+    /* 快捷操作栏 */
+    .rp-quickbar {
+      display: flex;
+      gap: 6px;
+      padding: 6px 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .rp-quick-btn {
+      background: #16213e;
+      border: 1px solid #1a5276;
+      color: #8899bb;
+      padding: 5px 12px;
+      border-radius: 14px;
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+      transition: all 0.15s;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .rp-quick-btn:hover {
+      background: #1a5276;
+      color: #e0e8f0;
+      border-color: #2a6a9a;
+    }
+    .rp-quick-btn:active {
+      background: #0f3460;
+    }
+    .rp-quick-btn.accent {
+      background: #1a2744;
+      border-color: #fdd835;
+      color: #fdd835;
+    }
+    .rp-quick-btn.accent:hover {
+      background: #2a3a5e;
+    }
+    .rp-quick-sep {
+      width: 1px;
+      background: #1a5276;
+      margin: 0 2px;
+      align-self: stretch;
+    }
+
     @media (max-width: 600px) {
       .rp-data-grid { grid-template-columns: 1fr; }
       .rp-world-strip { flex-direction: column; align-items: flex-start; }
@@ -578,18 +624,12 @@
             <span>规范</span>
           </button>
           <span id="append-style-indicator" style="display:none;font-size:10px;color:#fdd835;margin-left:2px;">ON</span>
-          <!-- 卡片选择按钮 -->
-          <button class="rp-status-btn visible" id="rp-cards-btn" style="margin-right:6px;">🎭 卡片</button>
           <!-- 会话历史按钮 -->
           <button class="rp-status-btn visible" id="rp-sessions-btn" style="margin-right:6px;">📜 会话</button>
-          <!-- 状态面板按钮 -->
-          <button class="rp-status-btn" id="rp-status-btn">📊 状态</button>
           <!-- 设置面板按钮 -->
           <button class="rp-status-btn" id="rp-settings-btn" style="margin-left:2px;">⚙️</button>
           <!-- 代码片段按钮 -->
           <button class="rp-status-btn" id="rp-snippet-btn" style="margin-left:2px;">📋</button>
-          <!-- 代码终端按钮 -->
-          <button class="rp-status-btn" id="rp-term-btn" style="margin-left:2px;">⚡</button>
 
           <div class="pill session-cost" id="session-cost"></div>
           <div class="status">
@@ -614,13 +654,31 @@
 
       <!-- Input -->
       <div class="input-area">
+        <!-- 快捷操作栏 -->
+        <div class="rp-quickbar" id="rp-quickbar">
+          <button class="rp-quick-btn" data-action="memory-stats" title="查看自动记忆统计（会话结束时自动提取）">🧠 记忆</button>
+          <button class="rp-quick-btn" data-action="memory-search" title="搜索跨会话长期记忆">🔍 搜索</button>
+          <span class="rp-quick-sep"></span>
+          <button class="rp-quick-btn" data-action="cards" title="选择/切换角色卡">🎭 角色卡</button>
+          <button class="rp-quick-btn" data-action="status" title="查看当前角色状态">📊 状态</button>
+          <button class="rp-quick-btn" data-action="history" title="查看角色变更历史">📋 历史</button>
+          <span class="rp-quick-sep"></span>
+          <button class="rp-quick-btn accent" data-action="terminal" title="打开快速命令终端">⚡ 命令</button>
+        </div>
         <div class="slash-hints hidden" id="slash-hints">
           <div class="slash-hint" data-cmd="/status"><span class="slash-cmd">/status</span> 查看角色状态面板</div>
           <div class="slash-hint" data-cmd="/history "><span class="slash-cmd">/history</span> 查看角色变更历史</div>
+          <div class="slash-hint" data-cmd="/rp-mode"><span class="slash-cmd">/rp-mode</span> RP 模式状态与记忆系统</div>
+          <div class="slash-hint" data-cmd="/rp-cards"><span class="slash-cmd">/rp-cards</span> 列出可用角色卡</div>
+          <div class="slash-hint" data-cmd="/rp-use "><span class="slash-cmd">/rp-use</span> 切换角色卡</div>
           <div class="slash-hint" data-cmd="/rp"><span class="slash-cmd">/rp</span> RP 系统帮助</div>
           <div class="slash-hint" data-cmd="/route "><span class="slash-cmd">/route</span> 查看或选择剧情路线</div>
           <div class="slash-hint" data-cmd="/compact"><span class="slash-cmd">/compact</span> 压缩对话上下文</div>
           <div class="slash-hint" data-cmd="/tree"><span class="slash-cmd">/tree</span> 分支导航</div>
+          <div class="slash-hint" data-cmd="/memory_stats"><span class="slash-cmd">/memory_stats</span> 记忆统计</div>
+          <div class="slash-hint" data-cmd="/memory_search "><span class="slash-cmd">/memory_search</span> 搜索长期记忆</div>
+          <div class="slash-hint" data-cmd="/memory_remember "><span class="slash-cmd">/memory_remember</span> 手动保存记忆</div>
+          <div class="slash-hint" data-cmd="/knowledge_search "><span class="slash-cmd">/knowledge_search</span> 搜索世界书</div>
         </div>
         <form id="chat-form">
           <div class="input-bubble">
@@ -652,11 +710,13 @@
     <div class="rp-term-panel">
       <button class="rp-term-close" id="rp-term-close">✕</button>
       <div class="rp-term-title">⚡ 快速命令</div>
-      <div class="rp-term-section-title">状态 / 历史</div>
+      <div class="rp-term-section-title">状态 / 历史 / 记忆</div>
       <div class="rp-term-presets">
         <button class="rp-term-cmd" data-cmd="/status">📊 角色状态</button>
         <button class="rp-term-cmd" data-cmd="/history">📋 变更历史</button>
-        <button class="rp-term-cmd" data-cmd="/rp">ℹ️ RP帮助</button>
+        <button class="rp-term-cmd" data-cmd="/rp-mode">🧠 记忆系统</button>
+        <button class="rp-term-cmd" data-cmd="/memory_stats">📈 记忆统计</button>
+        <button class="rp-term-cmd" data-cmd="/rp-cards">🎭 角色卡</button>
       </div>
       <div class="rp-term-section-title">剧情 / 路线</div>
       <div class="rp-term-presets">
@@ -686,7 +746,7 @@
       <div class="session-picker-list" id="card-picker-list">
         <div style="text-align:center;padding:20px;color:#8899bb;">加载中...</div>
       </div>
-      <div style="font-size:11px;color:#556688;text-align:center;margin-top:8px;">可选择多张卡片同时激活（跨界混搭）</div>
+      <div style="font-size:11px;color:#556688;text-align:center;margin-top:8px;">一对一模型：一个会话一张角色卡</div>
       <button class="session-picker-new" id="card-picker-confirm">✅ 确认选择</button>
     </div>
   </div>

@@ -1,166 +1,179 @@
 // ============================================================
-// 用户命令集
-// /card list|activate|deactivate / /reset / /status / /history / /diag
+// 用户命令集 — 统一 API
 //
-// 提供两套 API:
-//   1. createPiCommands(sessionIdRef) → 返回适配 pi 扩展的 CommandRegistry
-//   2. handleCommand() / registerCommand() → 旧 API (供 HTTP server)
+// 核心逻辑定义一次，pi 扩展和 HTTP 服务器各通过薄适配器调用。
 // ============================================================
 
 import { cardManager } from "../card-manager.js"
-import { contextPipeline } from "../context/pipeline.js"
+import { contextPipeline as deprecatedPipeline } from "../context/pipeline.js"
+import type { ContextPipeline } from "../context/pipeline.js"
 import { stateStore } from "../state-store.js"
+import type { StateStore } from "../state-store.js"
+import type { CardManager } from "../card-manager.js"
 import { CommandRegistry, type ExtensionContext } from "../registry.js"
 
-// ---- 新 API: 适配 pi 扩展 ----
+// ---- 核心命令处理（返回字符串，输出格式无关） ----
 
-/**
- * 创建适配 pi 的命令注册表。
- * sessionIdRef 必须是 mutable ref ({ current: string })。
- */
-export function createPiCommandRegistry(sessionIdRef: { current: string }): CommandRegistry {
-  const registry = new CommandRegistry()
-  const sid = () => sessionIdRef.current
+type CoreCommandDeps = { st: StateStore; cm: CardManager; cp: ContextPipeline }
+type CoreCommandFn = (args: string, sessionId: string, deps: CoreCommandDeps) => Promise<string>
 
-  // 辅助：通过 ctx.ui.notify 输出
-  function notify(
-    ctx: unknown,
-    text: string,
-    level: "info" | "error" | "warning" | "success" = "info",
-  ) {
-    const c = ctx as ExtensionContext | null
-    if (c?.ui?.notify) {
-      c.ui.notify(text, level)
-    } else {
-      // 兜底：非交互模式
-      console.log(text)
-    }
+interface CoreCommand {
+  name: string
+  description: string
+  handler: CoreCommandFn
+}
+
+function notify(
+  ctx: unknown,
+  text: string,
+  level: "info" | "error" | "warning" | "success" = "info",
+) {
+  const c = ctx as ExtensionContext | null
+  if (c?.ui?.notify) {
+    c.ui.notify(text, level)
+  } else {
+    console.log(text)
   }
+}
 
-  // ---- /card ----
-  registry.register({
+// ========== 命令核心实现 ==========
+
+async function cardCmd(args: string, sessionId: string, deps: CoreCommandDeps): Promise<string> {
+  const parts = args.trim().split(/\s+/).filter(Boolean)
+  const sub = parts[0] || "list"
+
+  switch (sub) {
+    case "list": {
+      const all = deps.cm.getAllRegistered()
+      const lines = [
+        `角色卡列表 (${all.length} 张)`,
+        ...all.map(
+          (c) =>
+            `  ${c.activatedAt ? "🟢" : "⚪"} ${c.id}: ${c.name}${c.activatedAt ? " (激活)" : ""}`,
+        ),
+      ]
+      return lines.join("\n")
+    }
+    case "activate": {
+      const cardId = parts[1]
+      if (!cardId) return "用法: /card activate <cardId>"
+      try {
+        deps.cm.activate(cardId, sessionId)
+        return `已激活: ${cardId}`
+      } catch (err) {
+        return `错误: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+    case "deactivate": {
+      const cardId = parts[1]
+      if (!cardId) return "用法: /card deactivate <cardId>"
+      deps.cm.deactivate(cardId)
+      return `已停用: ${cardId}`
+    }
+    default:
+      return "用法: /card list | activate <id> | deactivate <id>"
+  }
+}
+
+async function statusCmd(_args: string, sessionId: string, deps: CoreCommandDeps): Promise<string> {
+  const session = deps.st.getSession(sessionId)
+  if (!session) return "无活跃 Session"
+
+  const s = session.runtimeStatus
+  return [
+    "引擎状态",
+    `Session: ${session.sessionId}`,
+    `Phase: ${s.phase}`,
+    `Budget: ${s.currentBudget.target}/${s.currentBudget.hard}`,
+    `Bytes: ${s.totalBytesUsed}`,
+    `Nodes: ${s.nodeCount}`,
+    `Degradation: ${s.degradationApplied ? "YES" : "NO"}`,
+    `Active cards: ${session.activatedCards.size}`,
+    `History: ${session.history.length} entries`,
+  ].join("\n")
+}
+
+async function resetCmd(_args: string, sessionId: string, deps: CoreCommandDeps): Promise<string> {
+  const session = deps.st.getSession(sessionId)
+  if (session) {
+    session.history = []
+    session.runtimeStatus.phase = "idle"
+  }
+  return "Session 已重置"
+}
+
+async function diagCmd(_args: string, sessionId: string, deps: CoreCommandDeps): Promise<string> {
+  const result = await deps.cp.assemble(sessionId)
+  if (result.phase !== "ready") return `管线失败: ${result.phase}`
+  const lines = [
+    "=== Context Assembly Trace ===",
+    `节点数: ${result.status.nodeCount}`,
+    `降级: ${result.status.degradationApplied}`,
+    "",
+  ]
+  for (const entry of result.status.trace ?? []) {
+    lines.push(`  [${entry.action}] ${entry.nodeId}: ${entry.reason}`)
+  }
+  lines.push(
+    "",
+    `Prompt: ${result.prompt.length} chars`,
+    `Display: ${result.displayPrompt.length} chars`,
+  )
+  return lines.join("\n")
+}
+
+async function historyCmd(_args: string, sessionId: string, deps: CoreCommandDeps): Promise<string> {
+  const session = deps.st.getSession(sessionId)
+  if (!session) return "无活跃 Session"
+  return session.history.map((h, i) => `[${i}] ${h}`).join("\n")
+}
+
+const coreCommands: CoreCommand[] = [
+  {
     name: "card",
     description: "管理角色卡片: /card list | activate <id> | deactivate <id>",
-    handler: async (args, ctx) => {
-      const parts = args.trim().split(/\s+/).filter(Boolean)
-      const sub = parts[0] || "list"
+    handler: cardCmd,
+  },
+  { name: "status", description: "查看引擎状态", handler: statusCmd },
+  { name: "reset", description: "重置当前 session", handler: resetCmd },
+  { name: "diag", description: "诊断: /diag prompt", handler: diagCmd },
+  { name: "history", description: "查看对话历史", handler: historyCmd },
+]
 
-      switch (sub) {
-        case "list": {
-          const all = cardManager.getAllRegistered()
-          const lines = [
-            `📇 角色卡列表 (${all.length} 张)`,
-            ...all.map(
-              (c) =>
-                `  ${c.activatedAt ? "🟢" : "⚪"} ${c.id}: ${c.name}${c.activatedAt ? " (激活)" : ""}`,
-            ),
-          ]
-          notify(ctx, lines.join("\n"), "info")
-          return
-        }
-        case "activate": {
-          const cardId = parts[1]
-          if (!cardId) {
-            notify(ctx, "用法: /card activate <cardId>", "error")
-            return
-          }
-          try {
-            cardManager.activate(cardId, sid())
-            notify(ctx, `✅ 已激活: ${cardId}`, "success")
-          } catch (err) {
-            notify(ctx, `❌ ${err instanceof Error ? err.message : String(err)}`, "error")
-          }
-          return
-        }
-        case "deactivate": {
-          const cardId = parts[1]
-          if (!cardId) {
-            notify(ctx, "用法: /card deactivate <cardId>", "error")
-            return
-          }
-          cardManager.deactivate(cardId)
-          notify(ctx, `💤 已停用: ${cardId}`, "info")
-          return
-        }
-        default:
-          notify(ctx, "用法: /card list | activate <id> | deactivate <id>", "error")
-      }
-    },
-  })
+// ============================================================
+// Pi 适配器（供 pi 扩展使用）
+// ============================================================
 
-  // ---- /status ----
-  registry.register({
-    name: "status",
-    description: "查看引擎状态",
-    handler: async (_args, ctx) => {
-      const session = stateStore.getSession(sid())
-      if (!session) {
-        notify(ctx, "无活跃 Session", "error")
-        return
-      }
+/**
+ * 创建适配 pi 的命令注册表（DI 版本）。
+ * sessionIdRef 必须是 mutable ref ({ current: string })。
+ */
+export function createPiCommandRegistry(
+  sessionIdRef: { current: string },
+  deps: { stateStore: StateStore; cardManager: CardManager; contextPipeline: ContextPipeline },
+): CommandRegistry {
+  const registry = new CommandRegistry()
+  const sid = () => sessionIdRef.current
+  const { stateStore: st, cardManager: cm, contextPipeline: cp } = deps
 
-      const s = session.runtimeStatus
-      const lines = [
-        "🔧 引擎状态",
-        `Session: ${session.sessionId}`,
-        `Phase: ${s.phase}`,
-        `Budget: ${s.currentBudget.target}/${s.currentBudget.hard}`,
-        `Bytes: ${s.totalBytesUsed}`,
-        `Nodes: ${s.nodeCount}`,
-        `Degradation: ${s.degradationApplied ? "YES" : "NO"}`,
-        `Active cards: ${session.activatedCards.size}`,
-        `History: ${session.history.length} entries`,
-      ]
-      notify(ctx, lines.join("\n"), "info")
-    },
-  })
-
-  // ---- /reset ----
-  registry.register({
-    name: "reset",
-    description: "重置当前 session",
-    handler: async (_args, ctx) => {
-      const session = stateStore.getSession(sid())
-      if (session) {
-        session.history = []
-        session.runtimeStatus.phase = "idle"
-      }
-      notify(ctx, "✅ Session 已重置", "success")
-    },
-  })
-
-  // ---- /diag ----
-  registry.register({
-    name: "diag",
-    description: "诊断: /diag prompt",
-    handler: async (_args, ctx) => {
-      const result = await contextPipeline.assemble(sid())
-      if (result.phase !== "ready") {
-        notify(ctx, `管线失败: ${result.phase}`, "error")
-        return
-      }
-      const lines = [
-        "=== Context Assembly Trace ===",
-        `节点数: ${result.status.nodeCount}`,
-        `降级: ${result.status.degradationApplied}`,
-        "",
-      ]
-      for (const entry of result.status.trace ?? []) {
-        lines.push(`  [${entry.action}] ${entry.nodeId}: ${entry.reason}`)
-      }
-      lines.push(
-        "",
-        `Prompt: ${result.prompt.length} chars`,
-        `Display: ${result.displayPrompt.length} chars`,
-      )
-      notify(ctx, lines.join("\n"), "info")
-    },
-  })
+  for (const cmd of coreCommands) {
+    registry.register({
+      name: cmd.name,
+      description: cmd.description,
+      handler: async (args, ctx) => {
+        const text = await cmd.handler(args, sid(), { st, cm, cp })
+        const level = text.startsWith("错误") ? "error" : text.startsWith("已激活") ? "success" : "info"
+        notify(ctx, text, level)
+      },
+    })
+  }
 
   return registry
 }
 
-// ---- 旧 API: 供 HTTP server 和 CLI 示例使用 ----
+// ============================================================
+// HTTP 适配器（旧 API，供 HTTP server / CLI 使用）
+// ============================================================
 
 export interface CommandHandler {
   match(input: string): boolean
@@ -169,116 +182,29 @@ export interface CommandHandler {
 
 const commands: CommandHandler[] = []
 
+/** @deprecated 使用 CommandRegistry 替代 */
 export function registerCommand(handler: CommandHandler): void {
   commands.push(handler)
 }
 
 export async function handleCommand(input: string, sessionId: string): Promise<string> {
+  // 先检查注册的旧式命令
   for (const cmd of commands) {
     if (cmd.match(input)) return cmd.execute(input, sessionId)
   }
+
+  // 再匹配核心命令（按名称前缀派发）
+  const cmdName = input.startsWith("/") ? input.slice(1).split(/\s+/)[0] : input.split(/\s+/)[0]
+  const core = coreCommands.find((c) => c.name === cmdName)
+  if (core) {
+    const args = input.startsWith("/") ? input.slice(cmdName.length + 1).trim() : input
+    const deps = { st: stateStore, cm: cardManager, cp: deprecatedPipeline }
+    try {
+      return await core.handler(args, sessionId, deps)
+    } catch (err) {
+      return `Error: ${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+
   return `Unknown command: ${input}`
 }
-
-// 注册旧式命令（server.ts 使用）
-registerCommand({
-  match: (input) => input.startsWith("/card"),
-  execute: async (input, sessionId) => {
-    const parts = input.split(/\s+/)
-    const sub = parts[1]
-    switch (sub) {
-      case "list": {
-        const active = cardManager.getActiveCards()
-        const all = cardManager.getAllRegistered()
-        return [
-          "=== Active Cards ===",
-          ...active.map((c) => `  ${c.id}: ${c.name} (v${c.version})`),
-          "=== Registered ===",
-          ...all.map((c) => `  ${c.id}: ${c.name} ${c.activatedAt ? "(active)" : "(inactive)"}`),
-        ].join("\n")
-      }
-      case "activate": {
-        const cardId = parts[2]
-        if (!cardId) return "Usage: /card activate <cardId>"
-        try {
-          cardManager.activate(cardId, sessionId)
-          return `Card ${cardId} activated`
-        } catch (err) {
-          return `Failed: ${err instanceof Error ? err.message : String(err)}`
-        }
-      }
-      case "deactivate": {
-        const cardId = parts[2]
-        if (!cardId) return "Usage: /card deactivate <cardId>"
-        cardManager.deactivate(cardId)
-        return `Card ${cardId} deactivated`
-      }
-      default:
-        return "Usage: /card list|activate|deactivate"
-    }
-  },
-})
-
-registerCommand({
-  match: (input) => input === "/status",
-  execute: async (_input, sessionId) => {
-    const session = stateStore.getSession(sessionId)
-    if (!session) return "No active session"
-    const status = session.runtimeStatus
-    return [
-      `Phase: ${status.phase}`,
-      `Budget: ${status.currentBudget.target}/${status.currentBudget.hard}`,
-      `Bytes used: ${status.totalBytesUsed}`,
-      `Nodes: ${status.nodeCount}`,
-      `Degradation: ${status.degradationApplied ? "YES" : "NO"}`,
-      `Active cards: ${session.activatedCards.size}`,
-      `History entries: ${session.history.length}`,
-    ].join("\n")
-  },
-})
-
-registerCommand({
-  match: (input) => input.startsWith("/diag"),
-  execute: async (input, sessionId) => {
-    const parts = input.split(/\s+/)
-    if (parts[1] !== "prompt") return "Usage: /diag prompt"
-    const result = await contextPipeline.assemble(sessionId)
-    if (result.phase !== "ready") return `Pipeline failed: ${result.phase}`
-    const lines = [
-      "=== Context Assembly Trace ===",
-      `Total nodes: ${result.status.nodeCount}`,
-      `Degradation applied: ${result.status.degradationApplied}`,
-      "---",
-    ]
-    for (const entry of result.status.trace ?? []) {
-      lines.push(`  [${entry.action}] ${entry.nodeId}: ${entry.reason}`)
-    }
-    lines.push(
-      "---",
-      `Prompt length: ${result.prompt.length} chars`,
-      `Display length: ${result.displayPrompt.length} chars`,
-    )
-    return lines.join("\n")
-  },
-})
-
-registerCommand({
-  match: (input) => input === "/reset",
-  execute: async (_input, sessionId) => {
-    const session = stateStore.getSession(sessionId)
-    if (session) {
-      session.history = []
-      session.runtimeStatus.phase = "idle"
-    }
-    return "Session reset"
-  },
-})
-
-registerCommand({
-  match: (input) => input === "/history",
-  execute: async (_input, sessionId) => {
-    const session = stateStore.getSession(sessionId)
-    if (!session) return "No active session"
-    return session.history.map((h, i) => `[${i}] ${h}`).join("\n")
-  },
-})

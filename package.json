@@ -27,6 +27,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "esbuild": "^0.28.0",
+    "pi-total-recall": "^1.8.0",
     "png-chunk-text": "^1.0.0",
     "png-chunks-extract": "^1.0.0",
     "ws": "^8.21.0"

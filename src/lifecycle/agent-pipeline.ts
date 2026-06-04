@@ -4,6 +4,8 @@
 // 注意：不自动注册到 lifecycleBus，由调用方显式控制执行时机
 // ============================================================
 
+import { StateStore, stateStore as _defaultStateStore } from "../state-store.js"
+
 export interface AgentAction {
   type: "state_update" | "world_shift" | "runtime_flush" | "noop"
   description: string
@@ -19,6 +21,20 @@ export type AgentMiddleware = (ctx: AgentContext, next: () => Promise<void>) => 
 
 export class AgentPipeline {
   private middlewares: AgentMiddleware[] = []
+  private _stateStore: StateStore
+
+  constructor(stateStore?: StateStore) {
+    this._stateStore = stateStore ?? _defaultStateStore
+  }
+
+  private get stateStore(): StateStore {
+    return this._stateStore
+  }
+
+  /** 获取内部 StateStore（供中间件使用） */
+  getStateStore(): StateStore {
+    return this._stateStore
+  }
 
   /** 注册中间件，按注册顺序执行 */
   use(middleware: AgentMiddleware): void {
@@ -47,21 +63,5 @@ export class AgentPipeline {
   }
 }
 
+/** @deprecated 使用组合根 `createApp()` 或 `new AgentPipeline(stateStore)` 替代 */
 export const agentPipeline = new AgentPipeline()
-
-// ---- 内置中间件 ----
-// 注意：持久化统一由调用方（server.ts）负责，中间件不自动持久化
-
-// 状态变更摘要
-agentPipeline.use(async (ctx, next) => {
-  const dirtyCards = (await import("../state-store.js")).stateStore.getDirtyCards()
-  if (dirtyCards.length > 0) {
-    ctx.actions.push({
-      type: "state_update",
-      description: `${dirtyCards.length} dirty card(s) detected`,
-      payload: dirtyCards,
-    })
-    ;(await import("../state-store.js")).stateStore.clearDirtyCards()
-  }
-  await next()
-})

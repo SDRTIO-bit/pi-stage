@@ -1,0 +1,18 @@
+{
+  "token_budget": {
+    "worldbook_max": 1500,
+    "history_max_tokens": 8000,
+    "pipeline_target": 24576,
+    "pipeline_hard": 40960,
+    "output_reserve": 4000
+  },
+  "retriever": {
+    "method": "tfidf",
+    "top_k": 3,
+    "max_tokens": 4000,
+    "context_window": 3
+  },
+  "model_max_tokens": 128000,
+  "rp_web_port": 3012,
+  "rp_web_host": "0.0.0.0"
+}

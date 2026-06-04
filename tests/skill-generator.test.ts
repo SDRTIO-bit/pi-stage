@@ -57,12 +57,12 @@ describe("generateSkills", () => {
     expect(skills[0].filename).toBe("variable-protocol.md")
   })
 
-  it("skips uncategorized entries", () => {
-    const entries = [
-      entry("u1", "杂项", "今天天气不错。"),
-    ]
+  it("includes uncategorized entries as world-context", () => {
+    const entries = [entry("u1", "杂项", "今天天气不错。")]
     const skills = generateSkills(entries)
-    expect(skills).toHaveLength(0)
+    expect(skills).toHaveLength(1)
+    expect(skills[0].category).toBe("uncategorized")
+    expect(skills[0].filename).toBe("world-context.md")
   })
 
   it("groups multiple entries of same category into one skill", () => {

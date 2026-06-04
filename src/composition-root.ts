@@ -19,6 +19,7 @@ import { CardSessionStore } from "./cards/session-store.js"
 import { registerSkillHooks, createSkillCollector } from "./lifecycle/skill-hooks.js"
 import { createFormatRulesCollector } from "./collectors/format-rules.js"
 import { createStateCollector } from "./collectors/state-variables.js"
+import { createGlobalPresetCollector } from "./collectors/global-preset.js"
 import { FileSystemStorage } from "./infrastructure/storage-provider.js"
 
 // ---- App 类型 ----
@@ -162,7 +163,7 @@ function ensureDefaults(app: App, seed: NonNullable<AppConfig["seed"]>): void {
 export function createApp(config: AppConfig = {}): App {
   const sessionsRoot = config.sessionsRoot ?? "sessions"
   const cwd = config.cwd ?? process.cwd()
-  const budget = config.budget ?? { target: 24576, hard: 40960 }
+  const budget = config.budget ?? { target: 102400, hard: 163840 }
   const retriever = config.retriever ?? {}
   const seed = loadSeed(config)
 
@@ -176,6 +177,20 @@ export function createApp(config: AppConfig = {}): App {
   const regexEngine = new RegexEngine()
   const lifecycleBus = new LifecycleBus()
   const agentPipeline = new AgentPipeline(stateStore)
+
+  // 内置中间件：状态变更摘要
+  agentPipeline.use(async (ctx, next) => {
+    const dirtyCards = stateStore.getDirtyCards()
+    if (dirtyCards.length > 0) {
+      ctx.actions.push({
+        type: "state_update",
+        description: `${dirtyCards.length} dirty card(s) detected`,
+        payload: dirtyCards,
+      })
+      stateStore.clearDirtyCards()
+    }
+    await next()
+  })
 
   // 3. 应用层
   const contextPipeline = new ContextPipeline(stateStore, regexEngine)
@@ -251,6 +266,9 @@ export function createApp(config: AppConfig = {}): App {
     },
   }
   contextPipeline.registerCollector(triggerCollector)
+
+  // 注册全局预设 collector（引擎级，所有卡共享，优先级高于卡专属 Skill）
+  contextPipeline.registerCollector(createGlobalPresetCollector(cwd))
 
   // 注册卡专属 SkillCollector（根据 session 关联的 cardId 查找卡目录）
   contextPipeline.registerCollector(

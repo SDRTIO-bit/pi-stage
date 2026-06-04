@@ -5,7 +5,14 @@
 
 import { generateSkills, type GeneratedSkill } from "./skill-generator.js"
 import type { WorldbookEntry } from "./types.js"
-import { writeFileSync, mkdirSync, existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs"
+import {
+  writeFileSync,
+  mkdirSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+} from "node:fs"
 import { join } from "node:path"
 import { createHash } from "node:crypto"
 
@@ -32,7 +39,11 @@ export class SkillWriter {
     if (existsSync(this.skillsDir)) {
       for (const f of readdirSync(this.skillsDir)) {
         if (f.endsWith(".md") && !writtenFiles.has(f)) {
-          try { unlinkSync(join(this.skillsDir, f)) } catch { /* skip */ }
+          try {
+            unlinkSync(join(this.skillsDir, f))
+          } catch {
+            /* skip */
+          }
         }
       }
     }

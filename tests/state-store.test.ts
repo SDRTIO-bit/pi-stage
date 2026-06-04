@@ -1,118 +1,137 @@
 // ============================================================
 // state-store.test.ts — 状态存储单元测试
+// 使用 MemoryStorage 替代文件系统，消除 beforeEach 清理
 // ============================================================
 
 import { describe, it, expect, beforeEach, afterAll } from "vitest"
-import { stateStore } from "../src/state-store.js"
+import { StateStore } from "../src/state-store.js"
+import { MemoryStorage, FileSystemStorage } from "../src/infrastructure/storage-provider.js"
 import * as fs from "node:fs"
 
 const SID = "test-session-001"
 
-describe("StateStore", () => {
-  beforeEach(() => {
-    if (fs.existsSync("sessions")) fs.rmSync("sessions", { recursive: true })
-  })
+describe("StateStore (MemoryStorage)", () => {
+  let store: StateStore
 
-  afterAll(() => {
-    if (fs.existsSync("sessions")) fs.rmSync("sessions", { recursive: true })
+  beforeEach(() => {
+    store = new StateStore(new MemoryStorage())
   })
 
   it("creates and retrieves a session", () => {
-    const s = stateStore.createSession(SID)
+    const s = store.createSession(SID)
     expect(s.sessionId).toBe(SID)
     expect(s.history).toHaveLength(0)
     expect(s.runtimeStatus.phase).toBe("idle")
 
-    const got = stateStore.getSession(SID)
+    const got = store.getSession(SID)
     expect(got).toBeDefined()
     expect(got?.sessionId).toBe(SID)
   })
 
   it("returns undefined for unknown session", () => {
-    expect(stateStore.getSession("nonexistent")).toBeUndefined()
+    expect(store.getSession("nonexistent")).toBeUndefined()
   })
 
   it("appends history entries", () => {
-    stateStore.createSession(SID)
-    stateStore.appendHistory(SID, "user: hello")
-    stateStore.appendHistory(SID, "assistant: hi there")
+    store.createSession(SID)
+    store.appendHistory(SID, "user: hello")
+    store.appendHistory(SID, "assistant: hi there")
 
-    const s = stateStore.getSession(SID)!
+    const s = store.getSession(SID)!
     expect(s.history).toHaveLength(2)
     expect(s.history[0]).toBe("user: hello")
   })
 
   it("throws on appendHistory for missing session", () => {
-    expect(() => stateStore.appendHistory("nope", "msg")).toThrow()
+    expect(() => store.appendHistory("nope", "msg")).toThrow()
   })
 
   it("tracks dirty cards", () => {
-    stateStore.createSession(SID)
-    expect(stateStore.getDirtyCards()).toHaveLength(0)
+    store.createSession(SID)
+    expect(store.getDirtyCards()).toHaveLength(0)
 
-    stateStore.markCardDirty("card-a")
-    stateStore.markCardDirty("card-b")
-    stateStore.markCardDirty("card-a") // duplicate
+    store.markCardDirty("card-a")
+    store.markCardDirty("card-b")
+    store.markCardDirty("card-a") // duplicate
 
-    const dirty = stateStore.getDirtyCards()
+    const dirty = store.getDirtyCards()
     expect(dirty).toContain("card-a")
     expect(dirty).toContain("card-b")
 
-    stateStore.clearDirtyCards()
-    expect(stateStore.getDirtyCards()).toHaveLength(0)
+    store.clearDirtyCards()
+    expect(store.getDirtyCards()).toHaveLength(0)
   })
 
-  it("persists and loads session to/from disk", () => {
-    stateStore.createSession(SID)
-    stateStore.appendHistory(SID, "turn 1")
-    stateStore.persist(SID)
+  it("persists and loads session", () => {
+    store.createSession(SID)
+    store.appendHistory(SID, "turn 1")
+    store.persist(SID)
 
-    // Verify file exists
-    expect(fs.existsSync(`sessions/${SID}/state.json`)).toBe(true)
-
-    // Load into a fresh store
-    const loaded = stateStore.load(SID)
+    const loaded = store.load(SID)
     expect(loaded).toBeDefined()
     expect(loaded!.sessionId).toBe(SID)
     expect(loaded!.history).toEqual(["turn 1"])
   })
 
-  it("load returns undefined for missing file", () => {
-    expect(stateStore.load("no-such-session")).toBeUndefined()
+  it("load returns undefined for missing session", () => {
+    expect(store.load("no-such-session")).toBeUndefined()
   })
 
   it("rebuilds session from history", () => {
-    const s = stateStore.rebuildFromHistory("rebuilt", ["a", "b", "c"])
+    const s = store.rebuildFromHistory("rebuilt", ["a", "b", "c"])
     expect(s.sessionId).toBe("rebuilt")
     expect(s.history).toEqual(["a", "b", "c"])
     expect(s.runtimeStatus.phase).toBe("idle")
   })
 
   it("lists persisted sessions", () => {
-    stateStore.createSession("s1")
-    stateStore.createSession("s2")
-    stateStore.persist("s1")
-    stateStore.persist("s2")
+    store.createSession("s1")
+    store.createSession("s2")
+    store.persist("s1")
+    store.persist("s2")
 
-    const list = stateStore.listSessions()
+    const list = store.listSessions()
     expect(list).toContain("s1")
     expect(list).toContain("s2")
   })
 
   it("snapshot returns readonly copy", () => {
-    stateStore.createSession(SID)
-    const snap = stateStore.snapshot(SID)
+    store.createSession(SID)
+    const snap = store.snapshot(SID)
     expect(snap!.sessionId).toBe(SID)
   })
 
   it("snapshot returns undefined for unknown session", () => {
-    expect(stateStore.snapshot("nope")).toBeUndefined()
+    expect(store.snapshot("nope")).toBeUndefined()
+  })
+})
+
+describe("StateStore (FileSystemStorage)", () => {
+  const FS_SID = "fs-test-session"
+
+  afterAll(() => {
+    if (fs.existsSync("sessions")) fs.rmSync("sessions", { recursive: true })
   })
 
-  it("load handles corrupted state.json gracefully", () => {
-    stateStore.createSession(SID)
-    stateStore.persist(SID)
-    fs.writeFileSync(`sessions/${SID}/state.json`, "not json", "utf-8")
-    expect(stateStore.load(SID)).toBeUndefined()
+  it("persists to disk and loads back", () => {
+    if (fs.existsSync("sessions")) fs.rmSync("sessions", { recursive: true })
+    const store = new StateStore(new FileSystemStorage("sessions"))
+    store.createSession(FS_SID)
+    store.appendHistory(FS_SID, "turn 1")
+    store.persist(FS_SID)
+
+    expect(fs.existsSync(`sessions/${FS_SID}.json`)).toBe(true)
+
+    const loaded = store.load(FS_SID)
+    expect(loaded).toBeDefined()
+    expect(loaded!.history).toEqual(["turn 1"])
+  })
+
+  it("load handles corrupted data gracefully", () => {
+    const store = new StateStore(new FileSystemStorage("sessions"))
+    store.createSession(FS_SID)
+    store.persist(FS_SID)
+    fs.writeFileSync(`sessions/${FS_SID}.json`, "not json", "utf-8")
+    expect(store.load(FS_SID)).toBeUndefined()
   })
 })

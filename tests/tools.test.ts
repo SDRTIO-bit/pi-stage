@@ -8,6 +8,7 @@ import { cardManager } from "../src/card-manager.js"
 import { worldbook } from "../src/worldbook/index.js"
 import { createPiTools, callTool, listTools, getTool } from "../src/tools.js"
 import type { PiToolDef } from "../src/tools.js"
+import { LifecycleBus } from "../src/lifecycle/events.js"
 
 const SID = "tools-test-session"
 
@@ -32,12 +33,24 @@ function setupSession(sessionId: string) {
   if (worldbook.getIndex().constantCount === 0) {
     worldbook.load([
       {
-        id: "wb-tavern", name: "酒馆场景", keywords: ["酒馆", "旅店"], priority: 10,
-        constant: true, enabled: true, content: "温暖的壁炉，橡木吧台。", category: "常开设定",
+        id: "wb-tavern",
+        name: "酒馆场景",
+        keywords: ["酒馆", "旅店"],
+        priority: 10,
+        constant: true,
+        enabled: true,
+        content: "温暖的壁炉，橡木吧台。",
+        category: "常开设定",
       },
       {
-        id: "wb-secret", name: "密道", keywords: ["地下室", "密道", "暗门"], priority: 5,
-        constant: false, enabled: true, content: "吧台下有暗门通往密道。", category: "触发词条",
+        id: "wb-secret",
+        name: "密道",
+        keywords: ["地下室", "密道", "暗门"],
+        priority: 5,
+        constant: false,
+        enabled: true,
+        content: "吧台下有暗门通往密道。",
+        category: "触发词条",
       },
     ])
   }
@@ -48,7 +61,7 @@ describe("createPiTools", () => {
 
   beforeAll(() => {
     setupSession(SID)
-    tools = createPiTools({ current: SID })
+    tools = createPiTools({ current: SID }, stateStore, new LifecycleBus())
   })
 
   it("returns 4 tools", () => {
@@ -83,7 +96,7 @@ describe("createPiTools", () => {
   it("read_state returns placeholder when no active cards", async () => {
     const emptySid = "empty-tools-session"
     stateStore.createSession(emptySid)
-    const emptyTools = createPiTools({ current: emptySid })
+    const emptyTools = createPiTools({ current: emptySid }, stateStore, new LifecycleBus())
     const t = emptyTools.find((t) => t.name === "read_state")!
     const result = await t.execute("call-3", {}, null, null, {})
     expect(result.content[0].text).toContain("无激活卡片")
@@ -91,7 +104,13 @@ describe("createPiTools", () => {
 
   it("update_state sets variables on card", async () => {
     const t = tools.find((t) => t.name === "update_state")!
-    const result = await t.execute("call-4", { cardId: "hero", updates: { hp: 80, mood: "angry" } }, null, null, {})
+    const result = await t.execute(
+      "call-4",
+      { cardId: "hero", updates: { hp: 80, mood: "angry" } },
+      null,
+      null,
+      {},
+    )
     expect(result.content[0].text).toContain("已更新")
     expect(result.content[0].text).toContain("hero")
 
@@ -102,7 +121,13 @@ describe("createPiTools", () => {
 
   it("update_state errors on non-active card", async () => {
     const t = tools.find((t) => t.name === "update_state")!
-    const result = await t.execute("call-5", { cardId: "nonexistent", updates: { x: 1 } }, null, null, {})
+    const result = await t.execute(
+      "call-5",
+      { cardId: "nonexistent", updates: { x: 1 } },
+      null,
+      null,
+      {},
+    )
     expect(result.content[0].text).toContain("❌")
   })
 
@@ -125,7 +150,7 @@ describe("createPiTools", () => {
   })
 
   it("read_state errors on no active session", async () => {
-    const deadTools = createPiTools({ current: "nope" })
+    const deadTools = createPiTools({ current: "nope" }, stateStore, new LifecycleBus())
     const t = deadTools.find((t) => t.name === "read_state")!
     const result = await t.execute("call-9", {}, null, null, {})
     expect(result.content[0].text).toContain("❌")

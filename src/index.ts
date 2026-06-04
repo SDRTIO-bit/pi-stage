@@ -18,9 +18,16 @@ export * from "./lifecycle/index.js"
 export * from "./cards/types.js"
 export * from "./cards/importer.js"
 export * from "./cards/registry.js"
+export * from "./cards/skill-writer.js"
+export * from "./cards/session-store.js"
 
 export * from "./worldbook/index.js"
 
 export * from "./commands/index.js"
 
 export * from "./regex/hooks.js"
+
+export * from "./infrastructure/storage-provider.js"
+
+export { createApp, activateDefaultCards } from "./composition-root.js"
+export type { App, AppConfig } from "./composition-root.js"

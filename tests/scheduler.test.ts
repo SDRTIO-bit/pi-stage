@@ -98,10 +98,7 @@ describe("schedule", () => {
 
   it("preserves input order (sorting is done by caller)", () => {
     // schedule() walks nodes in given order; prioritize() in pipeline does sorting
-    const nodes = [
-      node("first", 30),
-      node("second", 30),
-    ]
+    const nodes = [node("first", 30), node("second", 30)]
     const r = schedule(nodes, BUDGET)
     expect(r.included[0].id).toBe("first")
     expect(r.included[1].id).toBe("second")
