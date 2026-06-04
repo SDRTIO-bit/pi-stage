@@ -51,52 +51,8 @@ export function generateCardSkills(cardDir: string, worldbookDir: string): Gener
     writeFileSync(join(skillsDir, skill.filename), skill.content, "utf-8")
   }
 
-  // ---- Phase 2: 扫描触发目录，提升匹配的元规则 ----
-  const triggerEntries = wb.getTriggerEntries()
-  if (triggerEntries.length > 0) {
-    // 按 target category 分组触发条目
-    const promoted = new Map<SkillCategory, WorldbookEntry[]>()
-
-    for (const entry of triggerEntries) {
-      const cat = categorizeEntry(entry)
-      if (cat === "uncategorized") continue // 拿不准的留在触发目录
-      const list = promoted.get(cat) ?? []
-      list.push(entry)
-      promoted.set(cat, list)
-    }
-
-    // 追加到对应 skill 文件
-    const filenameMap: Record<string, string> = {
-      "core-rules": "00-core-rules.md",
-      "style-protocol": "style-protocol.md",
-      "judgment-system": "judgment-system.md",
-      "variable-protocol": "variable-protocol.md",
-    }
-
-    for (const [cat, entries] of promoted) {
-      const filename = filenameMap[cat]
-      if (!filename) continue
-      const filePath = join(skillsDir, filename)
-
-      // 确保文件存在（如果 Phase 1 没生成，创建一个空文件）
-      if (!existsSync(filePath)) {
-        writeFileSync(filePath, "", "utf-8")
-      }
-
-      const appendix = entries
-        .sort((a, b) => a.priority - b.priority)
-        .map((e) => `## 来源: 触发条目 | ${e.name}\n${e.content}`)
-        .join("\n\n")
-
-      appendFileSync(filePath, "\n\n---\n\n" + appendix, "utf-8")
-    }
-
-    // 更新内存中的 skills 列表
-    if (promoted.size > 0) {
-      const updated = readCardSkills(cardDir)
-      return updated
-    }
-  }
+  // Phase 2 已移除：触发条目全部走 TF-IDF 按需检索，不再提升到 Skill 文件。
+  // 否则 1359 条触发条目中有 267 条会被追加回 Skill，导致 Skill 膨胀到 700KB+。
 
   return skills
 }

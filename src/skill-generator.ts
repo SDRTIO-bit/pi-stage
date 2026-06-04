@@ -95,9 +95,17 @@ export function generateSkills(
     ? constantEntries.filter((e) => !isKnowledgeEntry(e))
     : constantEntries
 
+  // 按 name 去重（卡片 character_book 可能含重复条目）
+  const seen = new Set<string>()
+  const deduped = entries.filter((e) => {
+    if (seen.has(e.name)) return false
+    seen.add(e.name)
+    return true
+  })
+
   const grouped = new Map<SkillCategory, WorldbookEntry[]>()
 
-  for (const entry of entries) {
+  for (const entry of deduped) {
     const cat = categorizeEntry(entry)
     const list = grouped.get(cat) ?? []
     list.push(entry)
