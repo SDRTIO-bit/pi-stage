@@ -1,0 +1,22 @@
+{
+  "pi-total-recall": {
+    "localPath": ".pi/memory"
+  },
+  "pi-memory": {
+    "perTurnInjection": false,
+    "lessonInjection": "selective",
+    "consolidationModel": "claude-sonnet-4-20250514"
+  },
+  "pi-session-search": {
+    "syncOnStart": true
+  },
+  "pi-knowledge-search": {
+    "dirs": [".pi/cards"],
+    "overview": {
+      "inject": true,
+      "maxDepth": 3,
+      "maxFoldersPerDir": 15,
+      "maxKeywordsPerFolder": 8
+    }
+  }
+}

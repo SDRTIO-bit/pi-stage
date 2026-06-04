@@ -6,15 +6,12 @@ sessions/
 Thumbs.db
 Desktop.ini
 .DS_Store
-# pi.dev runtime (local)
+# pi.dev runtime (local data)
 .pi/skills/
 .pi/cards/
 .pi/sessions/
 .pi/snapshots/
 .pi/memory/
-.pi/agents/
-.pi/presets/
-.pi/settings.json
 # Runtime config (auto-generated on first run)
 .rpconfig.json
 # Temp test scripts
