@@ -21,21 +21,23 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-REM Parse major version: "v22.13.0" -> "22"
-for /f %%a in ('node -v') do set NODE_VER=%%a
-set NODE_MAJOR=!NODE_VER:~1!
-for /f "tokens=1 delims=." %%a in ("!NODE_MAJOR!") do set NODE_MAJOR=%%a
-if not defined NODE_MAJOR set NODE_MAJOR=0
-
-if !NODE_MAJOR! LSS 22 (
-    echo   [ERROR] Node.js version ^>= 22 required, but found v!NODE_MAJOR!
+REM Verify version >= 22 (let Node check itself -- most reliable)
+node -e "process.exit(parseInt(process.version.slice(1).split('.')[0]) >= 22 ? 0 : 1)" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo   [ERROR] Node.js version ^>= 22 required.
+    echo   Current version:
+    node -v
     echo   Install from: https://nodejs.org/
     pause
     exit /b 1
 )
 
-echo   Node.js v!NODE_MAJOR! -- OK
+echo   Node.js -- OK
 node -v
+
+REM Get major version for later checks
+for /f %%a in ('node -e "process.stdout.write(process.version.slice(1).split('.')[0])"') do set NODE_MAJOR=%%a
+
 echo   npm:
 npm -v
 
