@@ -307,7 +307,7 @@ export default function (pi: ExtensionAPI) {
   })
 
   // ==================== 工具注册 ====================
-  const tools = createPiTools(sessionIdRef, app.stateStore, app.lifecycleBus)
+  const tools = createPiTools(sessionIdRef, app.stateStore, app.lifecycleBus, app.worldbook)
   for (const tool of tools) {
     pi.registerTool({
       name: tool.name,

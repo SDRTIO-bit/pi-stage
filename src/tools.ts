@@ -4,6 +4,7 @@
 
 import type { StateStore } from "./state-store.js"
 import type { LifecycleBus } from "./lifecycle/events.js"
+import type { Worldbook } from "./worldbook/index.js"
 
 type CoreToolHandler = (args: Record<string, unknown>, sessionId: string) => Promise<unknown>
 
@@ -38,7 +39,7 @@ export interface PiToolDef {
 }
 
 /** 构建 4 个内置工具定义（纯函数，同时更新模块级缓存供 HTTP 适配器使用） */
-function buildCoreTools(stateStore: StateStore): CoreToolDef[] {
+function buildCoreTools(stateStore: StateStore, worldbook?: Worldbook): CoreToolDef[] {
   const tools: CoreToolDef[] = [
     {
       name: "read_state",
@@ -127,10 +128,12 @@ function buildCoreTools(stateStore: StateStore): CoreToolDef[] {
         required: ["query"],
       },
       handler: async (args) => {
-        const { worldbook } = await import("./worldbook/index.js")
         const query = args.query as string
         const maxResults = (args.maxResults as number) ?? 5
-        return worldbook.searchByKeywords(query).slice(0, maxResults)
+        if (worldbook) return worldbook.searchByKeywords(query).slice(0, maxResults)
+        // fallback: deprecated singleton (kept for HTTP standalone mode)
+        const { worldbook: wb } = await import("./worldbook/index.js")
+        return wb.searchByKeywords(query).slice(0, maxResults)
       },
     },
   ]
@@ -144,6 +147,7 @@ export function createPiTools(
   sessionIdRef: { current: string },
   stateStore: StateStore,
   lifecycleBus: LifecycleBus,
+  worldbook?: Worldbook,
 ): PiToolDef[] {
   _lifecycleBus = lifecycleBus
   const sid = () => sessionIdRef.current
@@ -176,7 +180,7 @@ export function createPiTools(
       }
     }
 
-  const tools = buildCoreTools(stateStore)
+  const tools = buildCoreTools(stateStore, worldbook)
 
   return tools.map((t) => ({
     name: t.name,
