@@ -1,9 +1,5 @@
 // ============================================================
-// 世界书系统 — 统一版（合并旧内存API + 新文件系统API）
-//
-// 两套API共存：
-//   - 内存API: load/searchByKeywords/getConstantEntries/getIndex (向后兼容)
-//   - 文件API: findWorldbookFilesMulti/getAllConstantEntries/readWorldbookIndexMulti (新)
+// 世界书系统
 // ============================================================
 
 import type { WorldbookEntry, WorldbookIndex } from "../types.js"
@@ -29,23 +25,8 @@ export function estimateTokens(text: string): number {
 }
 
 // ============================================================
-// 文件搜索类型（区别于 WorldbookEntry）
+// YAML Front Matter 解析
 // ============================================================
-
-export interface WorldbookFileEntry {
-  file: string
-  content: string
-  hitCount: number
-  tokenEstimate: number
-  sourceCard: string
-  sourceCardName: string
-  constant?: boolean
-  position?: number
-  depth?: number
-  selective?: boolean
-  secondaryKeys?: string[]
-  priority?: number
-}
 
 interface WorldbookYamlMeta {
   name: string
@@ -54,10 +35,6 @@ interface WorldbookYamlMeta {
   constant: boolean
   disabled: boolean
 }
-
-// ============================================================
-// YAML Front Matter 解析
-// ============================================================
 
 function parseYamlFrontMatter(content: string): WorldbookYamlMeta {
   const empty: WorldbookYamlMeta = {
@@ -84,155 +61,7 @@ function parseYamlFrontMatter(content: string): WorldbookYamlMeta {
   }
 }
 
-// ============================================================
-// 卡片名推断
-// ============================================================
-
-function getCardNameFromDir(cardDir: string): string {
-  const configPath = join(cardDir, "config.json")
-  if (existsSync(configPath)) {
-    try {
-      const config = JSON.parse(readFileSync(configPath, "utf-8"))
-      if (config.character?.name) return config.character.name
-    } catch {
-      /* ignore */
-    }
-  }
-  return basename(cardDir)
-}
-
-// ============================================================
-// 文件系统 API (from worldbook-new)
-// ============================================================
-
 const ACTIVE_DIRS = ["[触发]关键词", "[常开]设定"]
-
-/**
- * 按关键词搜索世界书（多目录版）
- */
-export function findWorldbookFilesMulti(
-  keyword: string,
-  worldbookDirs: string[],
-  cardId?: string,
-): { file: string; content: string; sourceCard: string; score: number }[] {
-  const dirs = cardId
-    ? worldbookDirs.filter((d) => {
-        try {
-          return basename(join(d, "..")) === cardId
-        } catch {
-          return false
-        }
-      })
-    : worldbookDirs
-
-  const results: { file: string; content: string; sourceCard: string; score: number }[] = []
-  const seen = new Set<string>()
-
-  for (const wbDir of dirs) {
-    if (!existsSync(wbDir)) continue
-    const sourceCard = basename(join(wbDir, ".."))
-    for (const subDir of ACTIVE_DIRS) {
-      const fullDir = join(wbDir, subDir)
-      if (!existsSync(fullDir)) continue
-      try {
-        for (const f of readdirSync(fullDir)) {
-          if (!f.endsWith(".md")) continue
-          const name = f.replace(".md", "")
-          if (!name.includes(keyword) && keyword) continue
-          const key = `${sourceCard}::${subDir}/${f}`
-          if (seen.has(key)) continue
-          seen.add(key)
-          const content = readFileSync(join(fullDir, f), "utf-8").replace(
-            /^---[\s\S]*?\n---\n?/,
-            "",
-          )
-          results.push({ file: `${subDir}/${f}`, content, sourceCard, score: 0 })
-        }
-      } catch {
-        /* skip */
-      }
-    }
-  }
-  return results
-}
-
-/**
- * 获取所有常开条目（按文件名序号排序）
- */
-export function getAllConstantEntries(
-  worldbookDirs: string[],
-): { file: string; content: string; sourceCard: string; score: number; priority: number }[] {
-  const results: {
-    file: string
-    content: string
-    sourceCard: string
-    score: number
-    priority: number
-  }[] = []
-
-  for (const wbDir of worldbookDirs) {
-    if (!existsSync(wbDir)) continue
-    const sourceCard = basename(join(wbDir, ".."))
-    const constDir = join(wbDir, "[常开]设定")
-    if (!existsSync(constDir)) continue
-    try {
-      for (const f of readdirSync(constDir)) {
-        if (!f.endsWith(".md")) continue
-        const content = readFileSync(join(constDir, f), "utf-8")
-        const meta = parseYamlFrontMatter(content)
-        if (meta.disabled) continue
-        const body = content.replace(/^---[\s\S]*?\n---\n?/, "")
-        const num = parseInt((f.match(/(\d+)/) || [])[1] || "9999", 10)
-        results.push({
-          file: `[常开]设定/${f}`,
-          content: body,
-          sourceCard,
-          score: 0,
-          priority: num,
-        })
-      }
-    } catch {
-      /* skip */
-    }
-  }
-
-  return results.sort((a, b) => a.priority - b.priority)
-}
-
-/**
- * 读取多目录世界书索引
- */
-export function readWorldbookIndexMulti(worldbookDirs: string[]): string {
-  const parts: string[] = []
-  for (const wbDir of worldbookDirs) {
-    if (!existsSync(wbDir)) continue
-    const cardName = getCardNameFromDir(join(wbDir, ".."))
-    parts.push(`## ${cardName}`)
-    for (const subDir of ACTIVE_DIRS) {
-      const fullDir = join(wbDir, subDir)
-      if (!existsSync(fullDir)) continue
-      try {
-        const files = readdirSync(fullDir).filter((f) => f.endsWith(".md"))
-        if (files.length > 0) {
-          parts.push(`### ${subDir} (${files.length} 个文件)`)
-          for (const f of files) parts.push(`- ${f.replace(".md", "")}`)
-        }
-      } catch {
-        /* skip */
-      }
-    }
-    parts.push("")
-  }
-  return parts.join("\n")
-}
-
-/**
- * 获取所有激活卡片的合并常开设定内容
- */
-export function getMergedConstantContent(worldbookDirs: string[]): string[] {
-  const all = getAllConstantEntries(worldbookDirs)
-  return all.map((e) => e.content)
-}
 
 // ============================================================
 // Worldbook class (内存API, 向后兼容)
@@ -251,6 +80,12 @@ export class Worldbook {
   /** 加载世界书条目（编程式，向后兼容） */
   load(entries: WorldbookEntry[]): void {
     this.entries = entries
+    this.rebuildIndex()
+  }
+
+  /** 增量追加条目（不替换已有条目） */
+  addEntries(entries: WorldbookEntry[]): void {
+    this.entries.push(...entries)
     this.rebuildIndex()
   }
 
@@ -322,6 +157,16 @@ export class Worldbook {
     return this.index.constantEntries
   }
 
+  /** 获取全部已加载条目（含常开 + 触发） */
+  getAllEntries(): WorldbookEntry[] {
+    return [...this.entries]
+  }
+
+  /** 获取触发条目（非 constant） */
+  getTriggerEntries(): WorldbookEntry[] {
+    return this.entries.filter((e) => !e.constant && e.category !== "常开设定")
+  }
+
   /** 按关键词搜索触发词条 */
   searchByKeywords(text: string): WorldbookEntry[] {
     const lowerText = text.toLowerCase()
@@ -333,9 +178,54 @@ export class Worldbook {
       }
     }
 
-    return this.entries
-      .filter((e) => matchedIds.has(e.id))
-      .sort((a, b) => b.priority - a.priority)
+    return this.entries.filter((e) => matchedIds.has(e.id)).sort((a, b) => b.priority - a.priority)
+  }
+
+  /** TF-IDF 相似度检索触发条目（双限制：top_k + max_tokens） */
+  searchBySimilarity(query: string, opts?: { topK?: number; maxTokens?: number }): WorldbookEntry[] {
+    const topK = opts?.topK ?? 3
+    const maxTokens = opts?.maxTokens ?? 4000
+
+    const triggerEntries = this.getTriggerEntries()
+    if (triggerEntries.length === 0) return []
+
+    const queryTokens = tokenizeCN(query)
+    if (queryTokens.length === 0) return this.searchByKeywords(query).slice(0, topK)
+
+    const docTokens = triggerEntries.map((e) => tokenizeCN(e.name + " " + e.content))
+
+    // IDF
+    const docCount = docTokens.length
+    const df = new Map<string, number>()
+    for (const tokens of docTokens) {
+      for (const t of new Set(tokens)) {
+        df.set(t, (df.get(t) ?? 0) + 1)
+      }
+    }
+
+    // Score: cosine similarity on TF-IDF vectors
+    const queryTf = termFrequency(queryTokens)
+    const queryVector = tfidfVector(queryTf, df, docCount)
+
+    const scored = triggerEntries.map((entry, i) => ({
+      entry,
+      score: cosineSimilarity(queryVector, tfidfVector(termFrequency(docTokens[i]), df, docCount)),
+    }))
+
+    scored.sort((a, b) => b.score - a.score)
+
+    const results: WorldbookEntry[] = []
+    let totalTokens = 0
+    for (const { entry, score } of scored) {
+      if (score <= 0) continue
+      if (results.length >= topK) break
+      const t = estimateTokens(entry.content)
+      if (totalTokens + t > maxTokens) continue
+      results.push(entry)
+      totalTokens += t
+    }
+
+    return results
   }
 
   /** 获取世界书索引摘要 */
@@ -347,23 +237,78 @@ export class Worldbook {
   }
 }
 
+/** @deprecated 使用组合根 `createApp()` 或 `new Worldbook()` 替代 */
+export const worldbook = new Worldbook()
+
 // ============================================================
-// 模块级辅助（向后兼容）
+// TF-IDF 相似度检索 — 轻量级实现
 // ============================================================
 
-/**
- * 初始化 Worldbook 服务（兼容旧调用）
- */
-export function initWorldbookService(): {
-  getConstantDirs: () => string[]
-} {
-  // 延迟引用，避免循环依赖
-  return {
-    getConstantDirs: () => {
-      const { getCardWorldbookDirs } = require("../card-manager.js")
-      return getCardWorldbookDirs()
-    },
+/** 中文 bigram 分词 + 英文/数字保留原词 */
+function tokenizeCN(text: string): string[] {
+  const tokens: string[] = []
+  let i = 0
+  while (i < text.length) {
+    const ch = text[i]
+    // 跳过标点和空白
+    if (/[\s,，。！？、：；""''（）\(\)\[\]【】\-—…\.\,\!\?\s]/.test(ch)) {
+      i++
+      continue
+    }
+    // 英文/数字词：连续吞入
+    if (/[a-zA-Z0-9_]/.test(ch)) {
+      let word = ""
+      while (i < text.length && /[a-zA-Z0-9_]/.test(text[i])) {
+        word += text[i++]
+      }
+      if (word.length >= 2) tokens.push(word.toLowerCase())
+      continue
+    }
+    // 中文字符：bigram
+    if (i + 1 < text.length && /[一-鿿]/.test(text[i + 1]) && !/[\s,，。！？、：；""''（）\(\)\[\]【】\-—…]/.test(text[i + 1])) {
+      tokens.push(text.slice(i, i + 2))
+    } else {
+      tokens.push(ch)
+    }
+    i++
   }
+  return tokens
 }
 
-export const worldbook = new Worldbook()
+function termFrequency(tokens: string[]): Map<string, number> {
+  const tf = new Map<string, number>()
+  for (const t of tokens) {
+    tf.set(t, (tf.get(t) ?? 0) + 1)
+  }
+  // Normalize
+  const len = tokens.length || 1
+  for (const [k, v] of tf) {
+    tf.set(k, v / len)
+  }
+  return tf
+}
+
+function tfidfVector(tf: Map<string, number>, df: Map<string, number>, docCount: number): Map<string, number> {
+  const vec = new Map<string, number>()
+  for (const [term, tfVal] of tf) {
+    const docFreq = df.get(term) ?? 0
+    const idf = Math.log((docCount + 1) / (docFreq + 1)) + 1
+    vec.set(term, tfVal * idf)
+  }
+  return vec
+}
+
+function cosineSimilarity(a: Map<string, number>, b: Map<string, number>): number {
+  let dot = 0
+  let magA = 0
+  let magB = 0
+  for (const [term, valA] of a) {
+    dot += valA * (b.get(term) ?? 0)
+    magA += valA * valA
+  }
+  for (const valB of b.values()) {
+    magB += valB * valB
+  }
+  if (magA === 0 || magB === 0) return 0
+  return dot / (Math.sqrt(magA) * Math.sqrt(magB))
+}
