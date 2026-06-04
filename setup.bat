@@ -1,192 +1,109 @@
 @echo off
 chcp 65001 >nul
-setlocal enabledelayedexpansion
+setlocal
 
 echo.
 echo ============================================
-echo       PI RP Engine -- Setup Script
+echo   PI RP Engine -- Requirements Check
 echo ============================================
 echo.
 
-REM ============================================================
-REM Step 0: Check Node.js (version >= 22)
-REM ============================================================
-echo [1/6] Checking Node.js...
+set MISSING=0
 
+REM --- Node.js ---
+echo Checking Node.js...
 node --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo   [ERROR] Node.js not found. Install from: https://nodejs.org/
-    echo   Requires version ^>= 22
-    pause
-    exit /b 1
+    echo   [MISSING] Node.js (>= 22)
+    set MISSING=1
+) else (
+    for /f %%a in ('node -v') do echo   [OK] Node.js %%a
 )
 
-REM Verify version >= 22 (let Node check itself -- most reliable)
-node -e "process.exit(parseInt(process.version.slice(1).split('.')[0]) >= 22 ? 0 : 1)" >nul 2>&1
+REM --- npm ---
+echo Checking npm...
+call npm -v >nul 2>&1
 if %errorlevel% neq 0 (
-    echo   [ERROR] Node.js version ^>= 22 required.
-    echo   Current version:
-    node -v
-    echo   Install from: https://nodejs.org/
-    pause
-    exit /b 1
+    echo   [MISSING] npm
+    set MISSING=1
+) else (
+    for /f %%a in ('call npm -v') do echo   [OK] npm %%a
 )
 
-echo   Node.js -- OK
-node -v
-
-REM Get major version for later checks
-for /f %%a in ('node -p "process.version.slice(1).split('.')[0]"') do set NODE_MAJOR=%%a
-
-echo   npm:
-call npm -v
-
-REM ============================================================
-REM Step 1: Install / Update PI CLI
-REM ============================================================
-echo.
-echo [2/6] Installing PI CLI (@earendil-works/pi-coding-agent)...
-
+REM --- PI CLI ---
+echo Checking PI CLI...
 call npm list -g @earendil-works/pi-coding-agent >nul 2>&1
-if %errorlevel% equ 0 (
-    echo   PI CLI already installed, checking for updates...
-    call npm update -g @earendil-works/pi-coding-agent
+if %errorlevel% neq 0 (
+    echo   [MISSING] @earendil-works/pi-coding-agent
 ) else (
-    echo   First-time install of PI CLI...
-    call npm install -g @earendil-works/pi-coding-agent
-)
-if %errorlevel% neq 0 (
-    echo   [WARNING] Global install failed (may need admin).
-    echo   Trying local install as fallback...
-    call npm install @earendil-works/pi-coding-agent
-    if !errorlevel! neq 0 (
-        echo   [ERROR] PI CLI install failed completely.
-        echo   Run manually as admin: npm install -g @earendil-works/pi-coding-agent
-        pause
-        exit /b 1
-    )
-    echo   PI CLI installed locally (use npx pi to run)
+    echo   [OK] PI CLI
 )
 
-REM ============================================================
-REM Step 2: Install project dependencies
-REM ============================================================
-echo.
-echo [3/6] Installing project dependencies...
-
-REM esbuild binary compat on Node 24+
-if !NODE_MAJOR! geq 24 (
-    echo   Node 24+ detected, installing esbuild compat layer...
-    call npm install esbuild@latest --save-dev 2>nul
+REM --- Project deps ---
+echo Checking project dependencies...
+if exist "node_modules\" (
+    echo   [OK] node_modules/
+) else (
+    echo   [MISSING] node_modules/ (run: npm install)
+    set MISSING=1
 )
 
-call npm install
-if %errorlevel% neq 0 (
-    echo   [ERROR] npm install failed
-    pause
-    exit /b 1
+REM --- pi-total-recall ---
+echo Checking pi-total-recall...
+if exist "node_modules\pi-total-recall\" (
+    echo   [OK] pi-total-recall
+) else (
+    echo   [MISSING] pi-total-recall (run: npm install pi-total-recall)
+    set MISSING=1
 )
-echo   Project dependencies installed
 
-REM ============================================================
-REM Step 3: Install PI extensions (pi-total-recall)
-REM ============================================================
-echo.
-echo [4/6] Installing PI extensions...
-
-if not exist "node_modules\pi-total-recall\" (
-    echo   Installing pi-total-recall (with postinstall scripts)...
-    call npm install pi-total-recall
-    if !errorlevel! neq 0 (
-        echo   Normal install failed, trying --ignore-scripts...
-        call npm install pi-total-recall --ignore-scripts
+REM --- Directories ---
+echo Checking directories...
+for %%d in (".pi\memory" ".pi\sessions" ".pi\extensions\rp-engine" ".pi\extensions\rp-web") do (
+    if not exist %%d (
+        echo   [MISSING] %%d
+        set MISSING=1
     )
 )
 
-if exist "node_modules\@samfp\pi-memory\" (
-    echo   [OK] @samfp/pi-memory -- semantic memory
-) else (
-    echo   [MISSING] @samfp/pi-memory not found
-)
-if exist "node_modules\pi-session-search\" (
-    echo   [OK] pi-session-search -- cross-session search
-) else (
-    echo   [MISSING] pi-session-search not found
-)
-if exist "node_modules\pi-knowledge-search\" (
-    echo   [OK] pi-knowledge-search -- worldbook search
-) else (
-    echo   [MISSING] pi-knowledge-search not found
+REM --- Critical files ---
+echo Checking critical files...
+for %%f in (
+    ".pi\agents\rp.md"
+    ".pi\settings.json"
+    ".pi\extensions\rp-engine\index.ts"
+    ".pi\extensions\rp-web\rp-web.html"
+    ".rpconfig.json"
+) do (
+    if exist %%f (
+        echo   [OK] %%f
+    ) else (
+        echo   [MISSING] %%f
+        set MISSING=1
+    )
 )
 
-REM ============================================================
-REM Step 4: Create required directories
-REM ============================================================
+REM --- Result ---
 echo.
-echo [5/6] Creating project directories...
-
-if not exist ".pi\memory\"           mkdir ".pi\memory"
-if not exist ".pi\sessions\"         mkdir ".pi\sessions"
-if not exist ".pi\extensions\"       mkdir ".pi\extensions"
-if not exist ".pi\extensions\rp-engine\" mkdir ".pi\extensions\rp-engine"
-if not exist ".pi\extensions\rp-web\"    mkdir ".pi\extensions\rp-web"
-
-echo   Directories ready
-
-REM ============================================================
-REM Step 5: Verify critical files
-REM ============================================================
-echo.
-echo [6/6] Verifying project files...
-
-set ALL_OK=1
-
-if not exist ".pi\agents\rp.md" (
-    echo   [MISSING] .pi\agents\rp.md -- Agent definition
-    set ALL_OK=0
-) else (
-    echo   [OK] .pi\agents\rp.md
-)
-if not exist ".pi\settings.json" (
-    echo   [MISSING] .pi\settings.json -- Extension config
-    set ALL_OK=0
-) else (
-    echo   [OK] .pi\settings.json
-)
-if not exist ".pi\extensions\rp-engine\index.ts" (
-    echo   [MISSING] .pi\extensions\rp-engine\index.ts -- Engine entry
-    set ALL_OK=0
-) else (
-    echo   [OK] .pi\extensions\rp-engine\index.ts
-)
-if not exist ".pi\extensions\rp-web\rp-web.html" (
-    echo   [MISSING] .pi\extensions\rp-web\rp-web.html -- Web frontend
-    set ALL_OK=0
-) else (
-    echo   [OK] .pi\extensions\rp-web\rp-web.html
-)
-
-REM ============================================================
-REM Done
-REM ============================================================
-echo.
-if !ALL_OK! equ 1 (
+if %MISSING% equ 0 (
     echo ============================================
-    echo   Setup complete.
+    echo   All requirements met.
     echo ============================================
     echo.
-    echo   Start command:
+    echo   To start:
     echo     pi --extension .pi/extensions/rp-engine/index.ts --tools "read,bash" --thinking high
     echo.
-    echo   RP Web UI:   http://localhost:3012
-    echo   RP status:   /rp-mode
-    echo   Card list:   /rp-cards
-    echo.
+    echo   RP Web:  http://localhost:3012
 ) else (
     echo ============================================
-    echo   Setup done but some files are missing.
+    echo   Some requirements are missing.
     echo ============================================
-    echo   Make sure you are in the project root
-    echo   directory and all files are in place.
+    echo.
+    echo   Minimum setup:
+    echo     1. Install Node.js >= 22: https://nodejs.org/
+    echo     2. npm install
+    echo     3. npm install -g @earendil-works/pi-coding-agent
+    echo     4. npm install pi-total-recall
+    echo     5. Ensure .pi/ directory has all required files
 )
 pause
