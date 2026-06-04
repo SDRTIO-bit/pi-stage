@@ -89,6 +89,20 @@ export class Worldbook {
     this.rebuildIndex()
   }
 
+  /** 原地将知识类常开条目重分类为触发词条（修改 constant/category 后重建索引） */
+  reclassifyKnowledge(isKnowledge: (entry: WorldbookEntry) => boolean): number {
+    let count = 0
+    for (const entry of this.entries) {
+      if (entry.constant && entry.enabled && isKnowledge(entry)) {
+        entry.constant = false
+        entry.category = "触发词条"
+        count++
+      }
+    }
+    if (count > 0) this.rebuildIndex()
+    return count
+  }
+
   /** 合并文件系统中的世界书到内存 */
   loadFromFiles(worldbookDirs?: string[]): void {
     const dirs = worldbookDirs ?? this.worldbookDirs

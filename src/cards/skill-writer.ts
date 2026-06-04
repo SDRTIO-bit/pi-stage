@@ -39,16 +39,8 @@ export function generateCardSkills(cardDir: string, worldbookDir: string): Gener
   // ---- Phase 1: 常开设定 → 拆分执行规则 / 世界知识 ----
   const constantEntries = wb.getConstantEntries()
 
-  // 检出知识条目（从 Skill 中排除，回归 worldbook 触发检索）
-  const knowledgeEntries = constantEntries.filter((e) => isKnowledgeEntry(e))
-  if (knowledgeEntries.length > 0) {
-    const reclassified = knowledgeEntries.map((e) => ({
-      ...e,
-      constant: false,
-      category: "触发词条" as const,
-    }))
-    wb.addEntries(reclassified)
-  }
+  // 原地重分类：知识条目 constant → false，回归触发检索
+  wb.reclassifyKnowledge(isKnowledgeEntry)
 
   // 仅用执行规则条目生成 Skill 文件
   const skills = generateSkills(constantEntries, { excludeKnowledge: true })
