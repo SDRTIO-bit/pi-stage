@@ -21,8 +21,10 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-REM Parse major version with fallback
-for /f "tokens=2 delims=v." %%a in ('node -v 2^>nul') do set NODE_MAJOR=%%a
+REM Parse major version: "v22.13.0" -> "22"
+for /f %%a in ('node -v') do set NODE_VER=%%a
+set NODE_MAJOR=!NODE_VER:~1!
+for /f "tokens=1 delims=." %%a in ("!NODE_MAJOR!") do set NODE_MAJOR=%%a
 if not defined NODE_MAJOR set NODE_MAJOR=0
 
 if !NODE_MAJOR! LSS 22 (
