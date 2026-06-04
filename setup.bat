@@ -36,7 +36,7 @@ echo   Node.js -- OK
 node -v
 
 REM Get major version for later checks
-for /f %%a in ('node -e "process.stdout.write(process.version.slice(1).split('.')[0])"') do set NODE_MAJOR=%%a
+for /f %%a in ('node -p "process.version.slice(1).split('.')[0]"') do set NODE_MAJOR=%%a
 
 echo   npm:
 npm -v
