@@ -39,7 +39,7 @@ REM Get major version for later checks
 for /f %%a in ('node -p "process.version.slice(1).split('.')[0]"') do set NODE_MAJOR=%%a
 
 echo   npm:
-npm -v
+call npm -v
 
 REM ============================================================
 REM Step 1: Install / Update PI CLI
@@ -47,7 +47,7 @@ REM ============================================================
 echo.
 echo [2/6] Installing PI CLI (@earendil-works/pi-coding-agent)...
 
-npm list -g @earendil-works/pi-coding-agent >nul 2>&1
+call npm list -g @earendil-works/pi-coding-agent >nul 2>&1
 if %errorlevel% equ 0 (
     echo   PI CLI already installed, checking for updates...
     call npm update -g @earendil-works/pi-coding-agent
