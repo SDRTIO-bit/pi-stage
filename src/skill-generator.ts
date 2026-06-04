@@ -22,7 +22,7 @@ export interface GeneratedSkill {
 }
 
 /** 根据内容特征推断分类 */
-function categorizeEntry(entry: WorldbookEntry): SkillCategory {
+export function categorizeEntry(entry: WorldbookEntry): SkillCategory {
   const titleLower = entry.name.toLowerCase()
   const contentLower = entry.content.toLowerCase()
 
@@ -63,11 +63,41 @@ function categorizeEntry(entry: WorldbookEntry): SkillCategory {
   return "uncategorized"
 }
 
+/** 判断条目是否为"世界知识"（应从 Skill 排除，走 worldbook 触发检索） */
+export function isKnowledgeEntry(entry: WorldbookEntry): boolean {
+  const name = entry.name
+  const content = entry.content.slice(0, 500)
+
+  // 【世界】前缀 → 知识（地理位置、物价、年表、神之途径、神秘学、海洋、维多利亚风、物品、资本、突发事件）
+  if (/^【世界】/.test(name)) return true
+
+  // 原著时间线
+  if (/原著时间线/.test(name)) return true
+
+  // 分隔符标记（世界观/数值参考/合理性审查/系统结构/判定区域 的开始和结束）
+  if (/——(世界观|数值参考|合理性审查|系统结构|判定区域)(开始|结束)/.test(name)) return true
+
+  // 内容特征：纯描述性，无规则/指令/格式关键词
+  // 如果内容前 500 字符不包含任何执行规则关键词 → 知识
+  const ruleKeywords =
+    /规则|必须|不得|禁止|格式|输出|更新|判定|骰子|DC|难度|roll|dice|check|替换|replace|JSON\s*Patch|UpdateVariable|Analysis|审查|OOC|叙事节奏|沉浸感|自动化|战斗|变量|数值|上限|基准|模板|\{\{/
+  if (!ruleKeywords.test(content)) return true
+
+  return false
+}
+
 /** 从常开设定生成 Skill 文件 */
-export function generateSkills(constantEntries: WorldbookEntry[]): GeneratedSkill[] {
+export function generateSkills(
+  constantEntries: WorldbookEntry[],
+  opts?: { excludeKnowledge?: boolean },
+): GeneratedSkill[] {
+  const entries = opts?.excludeKnowledge
+    ? constantEntries.filter((e) => !isKnowledgeEntry(e))
+    : constantEntries
+
   const grouped = new Map<SkillCategory, WorldbookEntry[]>()
 
-  for (const entry of constantEntries) {
+  for (const entry of entries) {
     const cat = categorizeEntry(entry)
     const list = grouped.get(cat) ?? []
     list.push(entry)
@@ -77,8 +107,6 @@ export function generateSkills(constantEntries: WorldbookEntry[]): GeneratedSkil
   const skills: GeneratedSkill[] = []
 
   for (const [category, entries] of grouped) {
-    if (category === "uncategorized") continue
-
     const filename = getFilename(category)
     const content = entries
       .sort((a, b) => a.priority - b.priority)
@@ -106,7 +134,7 @@ function getFilename(category: SkillCategory): string {
       return "judgment-system.md"
     case "variable-protocol":
       return "variable-protocol.md"
-    default:
-      return "uncategorized.md"
+    case "uncategorized":
+      return "world-context.md"
   }
 }
