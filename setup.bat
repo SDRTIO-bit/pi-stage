@@ -9,9 +9,10 @@ echo ============================================
 echo.
 
 REM ============================================================
-REM Step 0: Check Node.js
+REM Step 0: Check Node.js (version >= 22)
 REM ============================================================
-echo [1/5] Checking Node.js...
+echo [1/6] Checking Node.js...
+
 node --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo   [ERROR] Node.js not found. Install from: https://nodejs.org/
@@ -19,7 +20,19 @@ if %errorlevel% neq 0 (
     pause
     exit /b 1
 )
-echo   Node.js:
+
+REM Parse major version with fallback
+for /f "tokens=2 delims=v." %%a in ('node -v 2^>nul') do set NODE_MAJOR=%%a
+if not defined NODE_MAJOR set NODE_MAJOR=0
+
+if !NODE_MAJOR! LSS 22 (
+    echo   [ERROR] Node.js version ^>= 22 required, but found v!NODE_MAJOR!
+    echo   Install from: https://nodejs.org/
+    pause
+    exit /b 1
+)
+
+echo   Node.js v!NODE_MAJOR! -- OK
 node -v
 echo   npm:
 npm -v
@@ -28,7 +41,8 @@ REM ============================================================
 REM Step 1: Install / Update PI CLI
 REM ============================================================
 echo.
-echo [2/5] Installing PI CLI (@earendil-works/pi-coding-agent)...
+echo [2/6] Installing PI CLI (@earendil-works/pi-coding-agent)...
+
 npm list -g @earendil-works/pi-coding-agent >nul 2>&1
 if %errorlevel% equ 0 (
     echo   PI CLI already installed, checking for updates...
@@ -38,24 +52,27 @@ if %errorlevel% equ 0 (
     call npm install -g @earendil-works/pi-coding-agent
 )
 if %errorlevel% neq 0 (
-    echo   [WARNING] PI CLI install failed. Run manually:
-    echo   npm install -g @earendil-works/pi-coding-agent
+    echo   [WARNING] Global install failed (may need admin).
+    echo   Trying local install as fallback...
+    call npm install @earendil-works/pi-coding-agent
+    if !errorlevel! neq 0 (
+        echo   [ERROR] PI CLI install failed completely.
+        echo   Run manually as admin: npm install -g @earendil-works/pi-coding-agent
+        pause
+        exit /b 1
+    )
+    echo   PI CLI installed locally (use npx pi to run)
 )
 
 REM ============================================================
 REM Step 2: Install project dependencies
 REM ============================================================
 echo.
-echo [3/5] Installing project dependencies...
-
-if exist "node_modules\" (
-    echo   node_modules exists, installing new deps only...
-)
+echo [3/6] Installing project dependencies...
 
 REM esbuild binary compat on Node 24+
-for /f "tokens=2 delims=v." %%a in ('node -v') do set NODE_MAJOR=%%a
 if !NODE_MAJOR! geq 24 (
-    echo   Node 24 detected, installing esbuild compat layer...
+    echo   Node 24+ detected, installing esbuild compat layer...
     call npm install esbuild@latest --save-dev 2>nul
 )
 
@@ -68,14 +85,18 @@ if %errorlevel% neq 0 (
 echo   Project dependencies installed
 
 REM ============================================================
-REM Step 3: Check PI extensions
+REM Step 3: Install PI extensions (pi-total-recall)
 REM ============================================================
 echo.
-echo [4/5] Checking PI extensions...
+echo [4/6] Installing PI extensions...
 
 if not exist "node_modules\pi-total-recall\" (
-    echo   pi-total-recall not installed, retrying with --ignore-scripts...
-    call npm install pi-total-recall --ignore-scripts
+    echo   Installing pi-total-recall (with postinstall scripts)...
+    call npm install pi-total-recall
+    if !errorlevel! neq 0 (
+        echo   Normal install failed, trying --ignore-scripts...
+        call npm install pi-total-recall --ignore-scripts
+    )
 )
 
 if exist "node_modules\@samfp\pi-memory\" (
@@ -95,31 +116,50 @@ if exist "node_modules\pi-knowledge-search\" (
 )
 
 REM ============================================================
-REM Step 4: Create dirs and verify project structure
+REM Step 4: Create required directories
 REM ============================================================
 echo.
-echo [5/5] Initializing project directories...
+echo [5/6] Creating project directories...
 
-if not exist ".pi\memory\" mkdir ".pi\memory"
-if not exist ".pi\sessions\" mkdir ".pi\sessions"
-if not exist ".pi\extensions\rp-web\" mkdir ".pi\extensions\rp-web"
+if not exist ".pi\memory\"           mkdir ".pi\memory"
+if not exist ".pi\sessions\"         mkdir ".pi\sessions"
+if not exist ".pi\extensions\"       mkdir ".pi\extensions"
+if not exist ".pi\extensions\rp-engine\" mkdir ".pi\extensions\rp-engine"
+if not exist ".pi\extensions\rp-web\"    mkdir ".pi\extensions\rp-web"
+
+echo   Directories ready
+
+REM ============================================================
+REM Step 5: Verify critical files
+REM ============================================================
+echo.
+echo [6/6] Verifying project files...
 
 set ALL_OK=1
+
 if not exist ".pi\agents\rp.md" (
-    echo   [MISSING] .pi\agents\rp.md (agent definition)
+    echo   [MISSING] .pi\agents\rp.md -- Agent definition
     set ALL_OK=0
+) else (
+    echo   [OK] .pi\agents\rp.md
 )
 if not exist ".pi\settings.json" (
-    echo   [MISSING] .pi\settings.json (PI extension config)
+    echo   [MISSING] .pi\settings.json -- Extension config
     set ALL_OK=0
+) else (
+    echo   [OK] .pi\settings.json
 )
 if not exist ".pi\extensions\rp-engine\index.ts" (
-    echo   [MISSING] .pi\extensions\rp-engine\index.ts (RP engine entry)
+    echo   [MISSING] .pi\extensions\rp-engine\index.ts -- Engine entry
     set ALL_OK=0
+) else (
+    echo   [OK] .pi\extensions\rp-engine\index.ts
 )
 if not exist ".pi\extensions\rp-web\rp-web.html" (
-    echo   [MISSING] .pi\extensions\rp-web\rp-web.html (RP Web frontend)
+    echo   [MISSING] .pi\extensions\rp-web\rp-web.html -- Web frontend
     set ALL_OK=0
+) else (
+    echo   [OK] .pi\extensions\rp-web\rp-web.html
 )
 
 REM ============================================================
@@ -128,7 +168,7 @@ REM ============================================================
 echo.
 if !ALL_OK! equ 1 (
     echo ============================================
-    echo   [OK] Setup complete.
+    echo   Setup complete.
     echo ============================================
     echo.
     echo   Start command:
@@ -140,8 +180,9 @@ if !ALL_OK! equ 1 (
     echo.
 ) else (
     echo ============================================
-    echo   [WARN] Setup done but some files missing.
+    echo   Setup done but some files are missing.
     echo ============================================
-    echo   Make sure you are in the correct project directory.
+    echo   Make sure you are in the project root
+    echo   directory and all files are in place.
 )
 pause
