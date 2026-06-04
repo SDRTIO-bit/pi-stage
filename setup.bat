@@ -1,11 +1,11 @@
 @echo off
-chcp 65001 >nul 2>&1
+chcp 65001 >nul
 setlocal enabledelayedexpansion
 
 echo.
-echo +==========================================+
-echo ^|     PI RP Engine -- Setup Script         ^|
-echo +==========================================+
+echo ============================================
+echo       PI RP Engine -- Setup Script
+echo ============================================
 echo.
 
 REM ============================================================
@@ -68,13 +68,13 @@ if %errorlevel% neq 0 (
 echo   Project dependencies installed
 
 REM ============================================================
-REM Step 3: Install PI extensions (pi-total-recall)
+REM Step 3: Check PI extensions
 REM ============================================================
 echo.
 echo [4/5] Checking PI extensions...
 
 if not exist "node_modules\pi-total-recall\" (
-    echo   pi-total-recall not installed, retrying --ignore-scripts...
+    echo   pi-total-recall not installed, retrying with --ignore-scripts...
     call npm install pi-total-recall --ignore-scripts
 )
 
@@ -95,7 +95,7 @@ if exist "node_modules\pi-knowledge-search\" (
 )
 
 REM ============================================================
-REM Step 4: Create dirs + verify project structure
+REM Step 4: Create dirs and verify project structure
 REM ============================================================
 echo.
 echo [5/5] Initializing project directories...
@@ -127,9 +127,9 @@ REM Done
 REM ============================================================
 echo.
 if !ALL_OK! equ 1 (
-    echo +==========================================+
-    echo ^|  [OK] Setup complete!                   ^|
-    echo +==========================================+
+    echo ============================================
+    echo   [OK] Setup complete.
+    echo ============================================
     echo.
     echo   Start command:
     echo     pi --extension .pi/extensions/rp-engine/index.ts --tools "read,bash" --thinking high
@@ -139,9 +139,9 @@ if !ALL_OK! equ 1 (
     echo   Card list:   /rp-cards
     echo.
 ) else (
-    echo +==========================================+
-    echo ^|  [WARN] Setup done but some files missing ^|
-    echo +==========================================+
+    echo ============================================
+    echo   [WARN] Setup done but some files missing.
+    echo ============================================
     echo   Make sure you are in the correct project directory.
 )
 pause
