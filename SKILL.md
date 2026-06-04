@@ -15,7 +15,7 @@ version: 1.0.0
 
 ```bash
 # 1. 安装依赖
-cd /d F:\zhao\pi rp
+cd pi-rp-engine
 npm install
 
 # 2. 启动 pi.dev（自动加载 .pi/extensions/rp-engine/）
