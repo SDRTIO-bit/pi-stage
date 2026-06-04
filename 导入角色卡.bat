@@ -1,10 +1,11 @@
 @echo off
-chcp 65001 > nul
+chcp 65001 >nul
 cd /d "%~dp0"
 
 if "%~1"=="" (
-  echo 用法: 导入角色卡.bat ^<角色卡文件路径^>
-  echo 支持: PNG / WEBP / JPEG / JSON
+  echo Usage: import-card.bat ^<card-file-path^>
+  echo Supports: PNG / WEBP / JPEG / JSON
+  pause
   exit /b 1
 )
 
