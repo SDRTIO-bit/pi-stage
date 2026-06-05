@@ -244,6 +244,12 @@ html, body {
   cursor: pointer; line-height: 1;
 }
 .ch-menu-btn:hover { border-color: var(--accent); }
+.ch-collapse-btn {
+  background: none; border: 1px solid var(--border); color: var(--fg-dim);
+  font-size: 10px; padding: 1px 6px; border-radius: var(--radius-sm);
+  cursor: pointer; line-height: 1.4; transition: all .15s;
+}
+.ch-collapse-btn:hover { border-color: var(--accent); color: var(--accent); }
 .ch-card-name { font-weight: 600; font-size: 14px; }
 .ch-sep { color: var(--fg-dim); }
 .ch-session-id { font: 11px var(--font); color: var(--fg-dim); }
@@ -258,6 +264,16 @@ html, body {
 
 .ch-right { display: flex; align-items: center; gap: 8px; }
 .ch-tokens { font-size: 11px; color: var(--fg-dim); cursor: default; }
+
+.ch-snippets {
+  display: flex; gap: 2px; margin-right: 4px;
+}
+.ch-snip {
+  background: none; border: 1px solid var(--border); color: var(--fg-dim);
+  padding: 1px 6px; border-radius: 3px; cursor: pointer;
+  font: 10px var(--font); transition: all .15s; line-height: 1.4;
+}
+.ch-snip:hover { border-color: var(--accent); color: var(--accent); background: rgba(106,156,245,.06); }
 
 .btn {
   background: none; border: 1px solid var(--border); color: var(--fg);
@@ -320,15 +336,6 @@ html, body {
   padding: 10px 20px; border-top: 1px solid var(--border);
   background: var(--surface); flex-shrink: 0;
 }
-.input-snippets {
-  display: flex; gap: 4px; margin-bottom: 6px;
-}
-.snip-btn {
-  background: none; border: 1px solid var(--border); color: var(--fg-dim);
-  padding: 2px 8px; border-radius: var(--radius-sm); cursor: pointer;
-  font-size: 14px; line-height: 1; transition: all .15s;
-}
-.snip-btn:hover { border-color: var(--accent); color: var(--accent); }
 .input-row { display: flex; gap: 8px; }
 .input-row input {
   flex: 1; background: var(--bg); border: 1px solid var(--border);

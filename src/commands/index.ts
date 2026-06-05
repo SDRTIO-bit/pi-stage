@@ -135,7 +135,7 @@ const coreCommands: CoreCommand[] = [
     handler: cardCmd,
   },
   { name: "status", description: "查看引擎状态", handler: statusCmd },
-  { name: "reset", description: "重置当前 session", handler: resetCmd },
+  // /reset 由 rp-engine/index.ts 直接注册（需要访问 pi.sendUserMessage）
   { name: "diag", description: "诊断: /diag prompt", handler: diagCmd },
   { name: "history", description: "查看对话历史", handler: historyCmd },
 ]

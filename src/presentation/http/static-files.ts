@@ -34,7 +34,12 @@ export function serveStaticFile(req: http.IncomingMessage, res: http.ServerRespo
   const serveFile = (filePath: string): boolean => {
     if (!fs.existsSync(filePath)) return false
     const ext = path.extname(filePath)
-    res.writeHead(200, { "Content-Type": MIME[ext] ?? "application/octet-stream" })
+    // 禁用缓存，确保前端修改立即可见
+    res.writeHead(200, {
+      "Content-Type": MIME[ext] ?? "application/octet-stream",
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "Pragma": "no-cache",
+    })
     res.end(fs.readFileSync(filePath))
     return true
   }

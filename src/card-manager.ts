@@ -44,6 +44,11 @@ export class CardManager {
 
   // ========== 文件持久化 API (from card-manager-new) ==========
 
+  /** 使缓存失效，下次访问时重新读取磁盘 */
+  invalidateCache(): void {
+    this.cachedRegistry = null
+  }
+
   getRegistry(): CardRegistryData {
     if (this.cachedRegistry) return this.cachedRegistry
     if (!existsSync(this.registryPath)) {

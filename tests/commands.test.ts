@@ -107,25 +107,6 @@ describe("handleCommand", () => {
     })
   })
 
-  describe("/reset", () => {
-    it("resets session history and phase", async () => {
-      const sess = mockSession()
-      vi.mocked(stateStore.getSession).mockReturnValue(sess as any)
-
-      const result = await handleCommand("/reset", "s1")
-      expect(result).toContain("已重置")
-      expect(sess.history).toEqual([])
-      expect(sess.runtimeStatus.phase).toBe("idle")
-    })
-
-    it("no session — does not crash", async () => {
-      vi.mocked(stateStore.getSession).mockReturnValue(undefined)
-
-      const result = await handleCommand("/reset", "s1")
-      expect(result).toContain("已重置")
-    })
-  })
-
   describe("/diag", () => {
     it("ready pipeline returns trace info", async () => {
       vi.mocked(contextPipeline.assemble).mockResolvedValue({

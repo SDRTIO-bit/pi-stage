@@ -255,7 +255,9 @@ src/
 │   └── prompt-snapshot.ts     # 每轮 prompt 快照写入
 │
 ├── infrastructure/
-│   └── storage-provider.ts    # StorageProvider + FileSystemStorage + MemoryStorage
+│   ├── storage-provider.ts    # StorageProvider 接口 + FileSystemStorage + MemoryStorage
+│   ├── pi-jsonl-storage.ts    # ★ PiJsonlStorage — 项目级 JSONL 存储（StorageProvider 实现）
+│   └── pi-jsonl-writer.ts     # JSONL 写入便捷函数（供路由实时追加消息）
 │
 ├── presentation/http/
 │   └── routes/                # session-routes, turn-routes, tool-routes
@@ -275,10 +277,11 @@ src/
 │   ├── skills/rp-engine/      # 卡专属 Skills（首次激活生成）
 │   └── sessions/              # 卡级 sessions
 ├── snapshots/{sid}/           # 观测快照
-└── sessions/                  # 中心化 session 存储
+└── sessions/                  # 项目级 session 存储 (JSONL 格式，id/parentId 树形结构)
 
 scripts/
-└── analyze-snapshots.mjs      # 快照批量分析工具
+├── analyze-snapshots.mjs      # 快照批量分析工具
+└── migrate-sessions.mjs       # 会话迁移 (全局目录 → 项目目录)
 ```
 
 ## 依赖注入模式

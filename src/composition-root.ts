@@ -20,7 +20,7 @@ import { registerSkillHooks, createSkillCollector } from "./lifecycle/skill-hook
 import { createFormatRulesCollector } from "./collectors/format-rules.js"
 import { createStateCollector } from "./collectors/state-variables.js"
 import { createGlobalPresetCollector } from "./collectors/global-preset.js"
-import { FileSystemStorage } from "./infrastructure/storage-provider.js"
+import { PiJsonlStorage } from "./infrastructure/pi-jsonl-storage.js"
 
 // ---- App 类型 ----
 
@@ -161,14 +161,13 @@ function ensureDefaults(app: App, seed: NonNullable<AppConfig["seed"]>): void {
 // ---- 核心工厂函数 ----
 
 export function createApp(config: AppConfig = {}): App {
-  const sessionsRoot = config.sessionsRoot ?? "sessions"
   const cwd = config.cwd ?? process.cwd()
   const budget = config.budget ?? { target: 102400, hard: 163840 }
   const retriever = config.retriever ?? {}
   const seed = loadSeed(config)
 
-  // 1. 基础设施层
-  const storage = new FileSystemStorage(sessionsRoot)
+  // 1. 基础设施层 — 使用项目级 JSONL 存储
+  const storage = new PiJsonlStorage(cwd)
   const stateStore = new StateStore(storage)
 
   // 2. 领域层

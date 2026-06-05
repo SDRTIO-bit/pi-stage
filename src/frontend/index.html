@@ -21,6 +21,7 @@ document.addEventListener("alpine:init", () => {
     loadingCards: false,
     sidebarCollapsed: false,
     activeTab: "cards",
+    headerCollapsed: false,
 
     // Session
     sessionId: "",
@@ -196,29 +197,32 @@ document.addEventListener("alpine:init", () => {
       if (sid === this.sessionId) return;
       this.loading = true;
       try {
-        // 如果当前有 session，先创建新 session 再加载历史
-        if (this.sessionId && this.selectedCardId) {
-          const r = await fetch("/session", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ cardId: this.selectedCardId }),
-          });
-          if (!r.ok) throw new Error("创建会话失败");
-          const d = await r.json();
-          this.sessionId = d.sessionId;
-          localStorage.setItem("rp-session", this.sessionId);
-          this.messages = [];
-        }
+        // 先获取旧 session 数据（确定 cardId）
+        const oldR = await fetch("/session/" + sid);
+        if (!oldR.ok) throw new Error("会话不存在");
+        const oldData = await oldR.json();
 
-        // 加载目标 session 的历史到当前 session
-        const r = await fetch("/session/" + sid);
-        if (!r.ok) throw new Error("加载会话失败");
+        // 用 copyFrom 创建新 session，后端自动复制历史
+        const r = await fetch("/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cardId: oldData.cardId || this.selectedCardId,
+            copyFrom: sid,
+          }),
+        });
+        if (!r.ok) throw new Error("创建会话失败");
         const d = await r.json();
+        this.sessionId = d.sessionId;
+        this.selectedCardId = d.cardId || oldData.cardId;
+        this.cardName = d.cardName || oldData.cardName;
+        localStorage.setItem("rp-session", this.sessionId);
 
-        // 通过发送消息逐个重新注入历史
-        this.pushMsg("system", "已加载会话: " + sid.slice(0, 22));
+        // 渲染历史（后端已写入 history）
+        this.messages = [];
+        this.pushMsg("system", "已加载历史会话");
         this.restoreHistory(d.history || []);
-        this.applyStatus(d);
+        this.applyStatus(oldData);
         this.activeTab = "status";
       } catch (err) {
         this.pushMsg("error", err.message);
@@ -505,12 +509,19 @@ document.addEventListener("alpine:init", () => {
       <header class="chat-header">
         <div class="ch-left">
           <button class="ch-menu-btn" @click="sidebarCollapsed = false" x-show="sidebarCollapsed">&#9776;</button>
+          <button class="ch-collapse-btn" @click="headerCollapsed = !headerCollapsed" :title="headerCollapsed ? '展开按钮' : '折叠按钮'"><span x-text="headerCollapsed ? '▼' : '▲'"></span></button>
           <span class="ch-card-name" x-text="cardName || '?'"></span>
           <span class="ch-sep">&#183;</span>
           <span class="ch-session-id" x-text="shortId"></span>
           <span class="ch-phase" :class="phase" x-text="phase"></span>
         </div>
-        <div class="ch-right">
+        <div class="ch-right" x-show="!headerCollapsed">
+          <div class="ch-snippets">
+            <button class="ch-snip" @click="insertCmd('/status')" title="/status">S</button>
+            <button class="ch-snip" @click="insertCmd('/history')" title="/history">H</button>
+            <button class="ch-snip" @click="insertCmd('/route')" title="/route">R</button>
+            <button class="ch-snip" @click="insertCmd('/compact')" title="/compact">C</button>
+          </div>
           <span class="ch-tokens" title="Tokens">&#9881; <span x-text="tokens"></span></span>
           <button class="btn" @click="newSession()" title="新会话">+ 新</button>
           <button class="btn" @click="clearMessages()" title="清空">清空</button>
@@ -529,13 +540,6 @@ document.addEventListener("alpine:init", () => {
       </div>
 
       <div class="input-area">
-        <div class="input-snippets">
-          <button class="snip-btn" @click="insertCmd('/status')" title="状态">&#128200;</button>
-          <button class="snip-btn" @click="insertCmd('/history')" title="历史">&#128214;</button>
-          <button class="snip-btn" @click="insertCmd('/route')" title="路线">&#128270;</button>
-          <button class="snip-btn" @click="insertCmd('/compact')" title="压缩">&#128259;</button>
-          <button class="snip-btn" @click="insertCmd('/rp-cards')" title="卡片">&#128161;</button>
-        </div>
         <div class="input-row">
           <input type="text" x-model="input" @keydown.enter="send" placeholder="输入消息或 /command ..." autofocus :disabled="loading" />
           <button class="send-btn" @click="send" :disabled="loading || !input.trim()"><span x-show="!loading">发送</span><span x-show="loading">...</span></button>

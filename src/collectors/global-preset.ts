@@ -28,7 +28,7 @@ export function createGlobalPresetCollector(cwd: string): Collector {
         return createNode({
           layer: "L1-stable",
           source: `全局预设: ${f}`,
-          content: `[Preset: ${f}]\n${content}`,
+          content: `[引擎级全局预设 — 最高优先级，当与卡专属设定冲突时以此为准]\n[Preset: ${f}]\n${content}`,
           priority: 3,
           attentionWeight: 1.0,
           degradationStrategy: "summarize",

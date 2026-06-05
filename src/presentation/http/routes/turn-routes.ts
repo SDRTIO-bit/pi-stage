@@ -4,6 +4,7 @@
 
 import type * as http from "node:http"
 import type { RouteContext } from "./route-context.js"
+import { appendMessageToJsonl, initJsonlFile } from "../../../infrastructure/pi-jsonl-writer.js"
 
 export async function register(
   ctx: RouteContext,
@@ -28,6 +29,10 @@ export async function register(
     return (ctx.json(res, 404, { error: "Session not found — create with POST /session first" }), true)
 
   ctx.app.stateStore.appendHistory(sid, `user: ${message}`)
+
+  // 同步写 Pi .jsonl（user 消息，项目级目录）
+  appendMessageToJsonl(sid, "user", message, undefined, ctx.projectRoot)
+
   const wbResults = message ? ctx.app.worldbook.searchByKeywords(message) : []
 
   const pipelineResult = await ctx.app.contextPipeline.assemble(sid)
@@ -36,6 +41,14 @@ export async function register(
 
   await ctx.app.lifecycleBus.emit("turn_end", sid, { turn: session.history.length })
   const agentActions = await ctx.app.agentPipeline.run(sid)
+
+  // 将 assistant 回复追加到历史中（刷新页面后可恢复完整对话）
+  const assistantReply = pipelineResult.displayPrompt || "[ok]"
+  ctx.app.stateStore.appendHistory(sid, `assistant: ${assistantReply}`)
+
+  // 同步写 Pi .jsonl（assistant 消息，项目级目录）
+  appendMessageToJsonl(sid, "assistant", assistantReply, undefined, ctx.projectRoot)
+
   ctx.app.stateStore.persist(sid)
 
   // 同步到卡级存储
@@ -44,10 +57,12 @@ export async function register(
     const cardDir = cardEntry.dir
     try {
       ctx.app.cardSessionStore.appendHistory(cardDir, sid, `user: ${message}`)
+      ctx.app.cardSessionStore.appendHistory(cardDir, sid, `assistant: ${assistantReply}`)
     } catch {
       // 卡目录下可能尚无此 session，创建并追加
       ctx.app.cardSessionStore.createSession(cardDir, sid)
       ctx.app.cardSessionStore.appendHistory(cardDir, sid, `user: ${message}`)
+      ctx.app.cardSessionStore.appendHistory(cardDir, sid, `assistant: ${assistantReply}`)
     }
   }
 

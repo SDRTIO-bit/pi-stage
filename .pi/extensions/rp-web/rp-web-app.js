@@ -333,14 +333,10 @@ function handleMessage(msg) {
       selectedCardIds = [...currentActiveCards];
       hideCardPicker();
       console.log('[RP] 卡片已切换:', msg.names?.join(', '));
-      if (msg.needRestart) {
-        // 提示用户刷新页面
-        const welcome = document.querySelector('.welcome');
-        if (welcome) {
-          welcome.innerHTML = `<p>✅ 卡片已切换: ${(msg.names || []).join('、')}</p>
-            <p class="hint">⚠️ 请刷新页面以使世界书和状态生效（F5 或 Ctrl+R）</p>`;
-        }
-      }
+      // 清空界面消息并触发后端新会话初始化
+      messageRenderer.clear();
+      messageRenderer.renderWelcome();
+      sendCommand('new_session');
       break;
     case 'sessions_list':
       renderSessionPicker(msg.sessions);

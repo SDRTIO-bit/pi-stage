@@ -6,6 +6,7 @@ import type * as http from "node:http"
 import type { RouteContext } from "./route-context.js"
 import { hasCardSkills, generateCardSkills } from "../../../cards/skill-writer.js"
 import { isKnowledgeEntry } from "../../../skill-generator.js"
+import { initJsonlFile, rebuildHistoryFromJsonl } from "../../../infrastructure/pi-jsonl-writer.js"
 
 export function register(
   ctx: RouteContext,
@@ -30,6 +31,10 @@ export function register(
       return (ctx.json(res, 400, { error: "cardId required" }), true)
     }
 
+    // 支持从旧 session 复制历史（前端加载历史会话时使用）
+    const copyFrom = parsed?.copyFrom as string | undefined
+    const importedHistory = parsed?.history as string[] | undefined
+
     const cardName = ctx.app.cardManager.getCardName(cardId)
     // 检查卡片是否存在（文件 registry + 内存）
     const reg = ctx.app.cardManager.getRegistry()
@@ -40,7 +45,9 @@ export function register(
     }
 
     // 激活卡片（一对一模型：独占激活）
-    ctx.app.cardManager.setActiveCard(cardId)
+    if (cardEntry) {
+      ctx.app.cardManager.setActiveCard(cardId)
+    }
 
     // 注册卡专属世界书到全局 Worldbook 实例
     if (cardEntry) {
@@ -60,6 +67,21 @@ export function register(
     // 创建 session 并关联 cardId（双写：中心 StateStore + 卡目录）
     const session = ctx.app.stateStore.createSession(sessionId)
     session.cardId = cardId
+    ctx.app.cardManager.activate(cardId, sessionId)
+
+    // 初始化 Pi .jsonl 文件（项目级目录）
+    initJsonlFile(sessionId, cardId, ctx.projectRoot)
+
+    // 从旧 session 复制历史
+    if (copyFrom) {
+      const oldSession = ctx.app.stateStore.getSession(copyFrom)
+      if (oldSession) {
+        session.history = [...oldSession.history]
+      }
+    } else if (importedHistory && Array.isArray(importedHistory)) {
+      session.history = importedHistory.filter((e) => typeof e === "string")
+    }
+
     ctx.app.stateStore.persist(sessionId)
     if (cardEntry) {
       ctx.app.cardSessionStore.createSession(cardEntry.dir, sessionId)
@@ -71,7 +93,7 @@ export function register(
       }
     }
 
-    return (ctx.json(res, 201, { ok: true, sessionId, cardId, cardName }), true)
+    return (ctx.json(res, 201, { ok: true, sessionId, cardId, cardName, history: session.history.length ? session.history : undefined }), true)
   }
 
   // GET /session/:id
@@ -79,13 +101,21 @@ export function register(
     const sid = pathname.split("/")[2]
     const session = ctx.app.stateStore.getSession(sid)
     if (!session) return (ctx.json(res, 404, { error: "Session not found" }), true)
+
+    // 如果内存中 history 为空，尝试从 .jsonl 重建
+    let history = session.history
+    if (history.length === 0) {
+      const rebuilt = rebuildHistoryFromJsonl(sid, ctx.projectRoot)
+      if (rebuilt) history = rebuilt
+    }
+
     return (
       ctx.json(res, 200, {
         sessionId: session.sessionId,
         cardId: session.cardId || "",
         cardName: session.cardId ? ctx.app.cardManager.getCardName(session.cardId) : "",
-        history: session.history,
-        historyCount: session.history.length,
+        history,
+        historyCount: history.length,
         activeCards: session.activatedCards.size,
         phase: session.runtimeStatus.phase,
         budget: session.runtimeStatus.currentBudget,

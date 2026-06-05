@@ -11,9 +11,17 @@ import { createNode } from "../src/context/prompt-node.js"
 import { callTool } from "../src/tools.js"
 import type { Collector } from "../src/context/pipeline.js"
 import * as fs from "node:fs"
+import { join } from "node:path"
 
 const SESSION_ID = "perf-test-10r"
 const TURNS = 10
+
+/** 与 PiJsonlStorage 相同的路径编码 */
+function encodePath(path: string): string {
+  const normalized = path.replace(/\\/g, "/")
+  const noDrive = normalized.replace(/^([A-Za-z]):/, "$1")
+  return "--" + noDrive.replace(/\//g, "-") + "--"
+}
 
 interface TurnMetrics {
   turn: number
@@ -30,9 +38,13 @@ describe("10 轮压测", () => {
   let app: App
 
   beforeAll(async () => {
-    // 清理上次残留
+    // 清理上次残留（旧 FileSystemStorage + 新 PiJsonlStorage）
     if (fs.existsSync("sessions")) {
       fs.rmSync("sessions", { recursive: true })
+    }
+    const piSessionsDir = join(process.cwd(), ".pi", "sessions", encodePath(process.cwd()))
+    if (fs.existsSync(piSessionsDir)) {
+      fs.rmSync(piSessionsDir, { recursive: true })
     }
 
     // 使用组合根创建隔离实例（跳过默认种子数据，测试使用自定义数据）
@@ -232,5 +244,7 @@ describe("10 轮压测", () => {
 
     // 清理
     if (fs.existsSync("sessions")) fs.rmSync("sessions", { recursive: true })
+    const piSessionsDir = join(process.cwd(), ".pi", "sessions", encodePath(process.cwd()))
+    if (fs.existsSync(piSessionsDir)) fs.rmSync(piSessionsDir, { recursive: true })
   })
 })

@@ -6,7 +6,6 @@
 
 import { readFileSync, existsSync, readdirSync, statSync, createReadStream } from "node:fs"
 import { join, extname, basename } from "node:path"
-import { homedir } from "node:os"
 import { createInterface } from "node:readline"
 import { exec } from "node:child_process"
 import type { CardManager } from "./card-manager.js"
@@ -15,7 +14,7 @@ import type { StateStore } from "./state-store.js"
 /** 最小 pi API 类型声明 */
 interface PiAPI {
   on(event: string, handler: (event: unknown, ctx?: unknown) => void): void
-  sendUserMessage(text: string, opts?: { deliverAs?: string }): void
+  sendUserMessage(text: string, opts?: { deliverAs?: string; streamingBehavior?: "steer" | "followUp" }): void
 }
 
 const MIME: Record<string, string> = {
@@ -32,6 +31,9 @@ export function createRPWebServer(
   cardManager: CardManager,
   stateStore: StateStore,
   getSessionId: () => string,
+  resetSessionId?: () => void,
+  projectRoot?: string,
+  setPreferredCard?: (cardId: string) => void,
 ) {
   const RP_PORT = parseInt(process.env.RP_WEB_PORT || "3012")
 
@@ -125,19 +127,18 @@ export function createRPWebServer(
     }
   }
 
-  // ========== PI 原生会话目录 ==========
+  // ========== 项目级会话目录 ==========
 
-  /** 将 cwd 编码为 PI session 目录名 */
+  /** 将 cwd 编码为 PI session 目录名（与 pi-jsonl-storage 统一） */
   function encodeCwd(cwd: string): string {
-    const encoded = cwd
-      .replace(/:\\/g, "--")   // Windows 盘符: F:\ → F--
-      .replace(/[\/\\]/g, "-") // 路径分隔符 → -
-      .replace(/:/g, "")       // 残留冒号
-    return "--" + encoded + "--"
+    const normalized = cwd.replace(/\\/g, "/")
+    const noDrive = normalized.replace(/^([A-Za-z]):/, "$1")
+    return "--" + noDrive.replace(/\//g, "-") + "--"
   }
 
   function getPiSessionsDir(): string {
-    return join(homedir(), ".pi", "agent", "sessions", encodeCwd(process.cwd()))
+    const root = projectRoot ?? process.cwd()
+    return join(root, ".pi", "sessions", encodeCwd(process.cwd()))
   }
 
   // ========== 会话扫描与加载 ==========
@@ -268,6 +269,12 @@ export function createRPWebServer(
     if (!session) return "无活跃 Session"
 
     switch (cmd) {
+      case "reset": {
+        session.history = []
+        session.runtimeStatus.phase = "idle"
+        if (resetSessionId) resetSessionId()
+        return "Session 已重置"
+      }
       case "history": {
         if (session.history.length === 0) return "(暂无对话历史)"
         return session.history
@@ -345,6 +352,8 @@ export function createRPWebServer(
 
         // ---- 卡片管理 ----
         case "list_cards": {
+          // 强制刷新 registry 缓存，确保导入的新卡可见
+          cardManager.invalidateCache()
           const reg = cardManager.getRegistry()
           const activeIds = cardManager.getActiveCardIds()
           const cards = Object.entries(reg.cards).map(([id, entry]) => ({
@@ -363,9 +372,21 @@ export function createRPWebServer(
             sendToRP(ws, err("activate_cards", "no card ids"))
             break
           }
-          const activated = cardManager.activateCards(cardIds)
-          const names = activated.map((id) => cardManager.getCardName(id))
-          sendToRP(ws, { type: "cards_activated", cardIds: activated, names, needRestart: true })
+          // RP 是一对一模式，用 setActiveCard 替换而非追加
+          const targetId = cardIds[0]
+          if (!cardManager.setActiveCard(targetId)) {
+            sendToRP(ws, err("activate_cards", "card not found: " + targetId))
+            break
+          }
+          const names = [cardManager.getCardName(targetId)]
+
+          // 同步 _preferredCardId（确保 resolveCardId 返回新卡）
+          if (setPreferredCard) setPreferredCard(targetId)
+
+          // 重置 PI 会话引用 → 下次消息时 ensureSession 用新卡完整初始化（世界书/skills/状态变量）
+          if (resetSessionId) resetSessionId()
+
+          sendToRP(ws, { type: "cards_activated", cardIds: [targetId], names, needRestart: true })
           break
         }
 
@@ -405,9 +426,8 @@ export function createRPWebServer(
             stateStore.persist(newSid)
           }
 
-          // 加载历史后，将最近对话通过 PI 系统消息注入上下文
-          // 使用 /reset 清空 PI session 避免与新加载历史冲突
-          pi.sendUserMessage("/reset")
+          // 重置 session 引用，下次用户消息时用加载的历史重新初始化
+          if (resetSessionId) resetSessionId()
           
           // 注入最后几轮历史对话作为 PI 引擎的上下文
           const recentHistory = result.history.slice(-8) // 最后 4 轮 (8 条消息)
@@ -436,8 +456,8 @@ export function createRPWebServer(
           break
         }
         case "new_session": {
-          // 通过 PI 触发新 session
-          pi.sendUserMessage("/reset")
+          // 清空 session 引用，下次用户消息时 ensureSession 会重新初始化
+          if (resetSessionId) resetSessionId()
           sendToRP(ws, { type: "new_session_started" })
           break
         }

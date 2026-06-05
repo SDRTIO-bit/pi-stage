@@ -12,7 +12,8 @@
     "format:check": "prettier --check src/ tests/ examples/",
     "lint": "eslint src/",
     "test": "vitest run",
-    "check": "npm run format:check && npm run typecheck && npm run lint && npm test"
+    "check": "npm run format:check && npm run typecheck && npm run lint && npm test",
+    "migrate-sessions": "node scripts/migrate-sessions.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",

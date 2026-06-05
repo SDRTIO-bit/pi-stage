@@ -18,8 +18,25 @@ LLM-neutral roleplay runtime。TypeScript，ESM 模块，`npx tsx` 直接运行�
 | Phase 6 | PI 集成加固 | lazy init / system prompt 替换 / 格式检查 |
 | Phase 7 | Prompt Snapshot + Budget 配置化 | observability/ + .rpconfig.json |
 | Phase 8 | TF-IDF 检索 + Collector 拆分 | worldbook TF-IDF + collectors/format-rules + state-variables |
+| Phase 9 | 会话存储项目级化 | PiJsonlStorage / JSONL 统一存储 / 迁移脚本 |
+| Phase 10 | 运行时缺陷修复 + 预设系统优化 | 卡切换修复 / 预算扩容 / 预设格式清理 / 优先级强化 |
 
 **当前**: 观测期 — 收集真实对话数据，暂不新增功能。
+
+## 已知问题与修复 (2026-06-05)
+
+### 卡切换
+前端切卡不生效的原因：`activateCards()` 是追加非替换，且 `_preferredCardId` 未同步。
+→ `rp-web-server.ts` 改用 `setActiveCard()` + `setPreferredCard` 回调。
+
+### 预设被卡覆盖
+卡世界书 ~78KB vs 预设 ~16KB，AI 自然倾向更详细的卡指令，导致人称等规则被忽略。
+→ 预算从 102400/163840 扩至 204800/245760（消除降级）
+→ 预设节点注入 `[引擎级全局预设 — 最高优先级]` 前缀
+
+### 预设格式问题
+`1.md` 含 `&#x20;` / `\#` / `\*` 等转义，干扰 AI 解析。
+→ Python 脚本清理 + 内部结构整合（去 `<wfeeling>` 外壳，文风纠错并入 anti_cliche）
 
 ## 架构分层
 
@@ -41,7 +58,9 @@ LLM-neutral roleplay runtime。TypeScript，ESM 模块，`npx tsx` 直接运行�
 │    (session + card storage)          │  cards/skill-writer.ts cards/session-store.ts
 ├──────────────────────────────────────┤
 │    Infrastructure                    │  infrastructure/storage-provider.ts
-│    (I/O abstraction)                 │  → FileSystemStorage / MemoryStorage
+│    (I/O abstraction)                 │  infrastructure/pi-jsonl-storage.ts
+│                                      │  infrastructure/pi-jsonl-writer.ts
+│                                      │  → FileSystemStorage / MemoryStorage / PiJsonlStorage
 └──────────────────────────────────────┘
 ```
 
@@ -207,7 +226,9 @@ src/
 │   └── index.ts               # 用户命令
 │
 ├── infrastructure/
-│   └── storage-provider.ts    # FileSystemStorage / MemoryStorage
+│   ├── storage-provider.ts    # StorageProvider 接口 + FileSystemStorage / MemoryStorage
+│   ├── pi-jsonl-storage.ts    # PiJsonlStorage — 项目级 JSONL 存储（StorageProvider 实现）
+│   └── pi-jsonl-writer.ts     # JSONL 写入便捷函数（供路由层实时追加）
 │
 ├── presentation/http/
 │   └── routes/                # session-routes, turn-routes, tool-routes
@@ -235,7 +256,8 @@ src/
 └── sessions/
 
 scripts/
-└── analyze-snapshots.mjs      # 快照批量分析
+├── analyze-snapshots.mjs      # 快照批量分析
+└── migrate-sessions.mjs       # 会话迁移 (全局目录 → 项目目录)
 
 tests/                          # Vitest (12 文件 / 134 测试)
 docs/                           # 开发文档
@@ -283,6 +305,25 @@ npx tsc --noEmit      # 类型检查
 3. HTTP 模式：`npx tsx src/server.ts` → localhost:3001 — 选卡 → 对话
 4. PI 模式：`pi --extension .pi/extensions/rp-engine/index.ts --tools "read,bash" --thinking high`
 5. 观测：检查 `.pi/snapshots/` 下有快照文件 → 运行 `node scripts/analyze-snapshots.mjs`
+6. 会话迁移（升级时）：`npm run migrate-sessions` — 将旧全局目录会话迁移到项目目录
+
+### 会话存储迁移
+
+`npm run migrate-sessions` — 将会话从旧全局目录 `~/.pi/agent/sessions/` 迁移到项目目录 `.pi/sessions/`。脚本自动检测新旧两种编码格式，跳过已存在文件。
+
+### 会话存储格式
+
+`.pi/sessions/<encoded-cwd>/*.jsonl` — append-only JSONL 文件，每行一个 JSON 事件，通过 `id`/`parentId` 构成对话树。核心类型：
+- `session` — 会话头（version/cwd/cardId）
+- `message` — 对话消息（id/parentId/timestamp/message）
+- `leaf` — 标记当前活跃分支末端
+- `deleted` — 标记会话已删除
+
+PiJsonlStorage 实现 `StorageProvider` 接口，被 `StateStore` 通过 DI 注入使用：
+- `read()` — 从 JSONL 重建 JSON 快照（兼容 StateStore 期望格式）
+- `write()` — 首次完整写入 / 后续增量同步（避免消息重复）
+- `delete()` — 追加 `deleted` 标记事件
+- `list()` — 扫描 `.jsonl` 文件提取 rpSessionId
 
 ## 已知问题
 

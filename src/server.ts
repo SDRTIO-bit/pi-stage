@@ -30,6 +30,7 @@ function safeJsonParse(body: string): Record<string, unknown> | null {
 
 const routeCtx: RouteContext = {
   app,
+  projectRoot: process.cwd(),
   readBody(req) {
     return new Promise<string>((resolve) => {
       let data = ""

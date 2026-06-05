@@ -26,7 +26,7 @@ export interface ExtensionAPI {
     cmd: { description: string; handler: (args: string, ctx: unknown) => Promise<void> },
   ): void
   appendEntry(type: string, data: unknown): void
-  sendUserMessage(text: string, opts?: { deliverAs?: string }): void
+  sendUserMessage(text: string, opts?: { deliverAs?: string; streamingBehavior?: "steer" | "followUp" }): void
 }
 
 export interface ExtensionContext {

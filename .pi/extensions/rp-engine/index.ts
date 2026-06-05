@@ -18,7 +18,6 @@ import {
   hasCardSkills,
   generateCardSkills,
 } from "../../../src/cards/skill-writer.js"
-import { isKnowledgeEntry } from "../../../src/skill-generator.js"
 import { logSnapshot } from "../../../src/observability/prompt-snapshot.js"
 import { loadRPConfig } from "../../../src/config.js"
 
@@ -59,7 +58,8 @@ export default function (pi: ExtensionAPI) {
   const app = getApp()
   const sessionIdRef = { current: "" }
   const cardIdRef = { current: "" }
-  let _preferredCardId = ""
+  // 从 registry.json 恢复上次选中的卡（持久化偏好）
+  let _preferredCardId = app.cardManager.getActiveCardIds()[0] || ""
 
   /** 获取当前应激活的 cardId：用户指定 → 文件 registry active → 导入卡 → 种子卡 → hero */
   function resolveCardId(): string {
@@ -83,6 +83,9 @@ export default function (pi: ExtensionAPI) {
     app.cardManager,
     app.stateStore,
     () => sessionIdRef.current,
+    () => { sessionIdRef.current = "" },
+    process.cwd(),
+    (cardId: string) => { _preferredCardId = cardId },
   )
   rpWeb.registerEventForwarding()
 
@@ -105,9 +108,8 @@ export default function (pi: ExtensionAPI) {
       const wbDir = app.cardManager.getCardWorldbookDir(cardId)
       if (wbDir) {
         app.worldbook.loadFromFiles([wbDir])
-        const reclassified = app.worldbook.reclassifyKnowledge(isKnowledgeEntry)
         const totalEntries = app.worldbook.getAllEntries().length
-        console.log(`[RP] 世界书已加载: ${totalEntries} 条 (${reclassified} 条知识→触发词条)`)
+        console.log(`[RP] 世界书已加载: ${totalEntries} 条`)
         if (!hasCardSkills(cardDir)) {
           generateCardSkills(cardDir, wbDir)
         }
@@ -223,7 +225,7 @@ export default function (pi: ExtensionAPI) {
       "你的唯一任务是沉浸式进行角色扮演互动。\n" +
       "禁止读取项目文件。禁止浏览目录。禁止查看 src/ 或 .pi/ 内容。\n" +
       "禁止使用 read 工具读取 .ts / .json / .md 项目文件。\n" +
-      "禁止使用 ls / cat / find 等 bash 命令探索项目结构。\n" +
+      "禁止使用 ls / dir / cat / type / find 等文件系统命令探索项目结构。\n" +
       "你已经拥有全部所需的世界观设定、角色信息和格式规则，无需额外获取。\n" +
       "直接开始角色扮演，从用户的第一条消息开始回应。\n"
 
@@ -438,11 +440,33 @@ export default function (pi: ExtensionAPI) {
         return
       }
       _preferredCardId = cardId
+      // 立即持久化到 registry.json，防止 PI 重启后丢失偏好
+      app.cardManager.setActiveCard(cardId)
       // 重置 session，下次 before_agent_start 会用新卡重新初始化
       sessionIdRef.current = ""
       cardIdRef.current = ""
       _initDone = false
-      ctx.ui?.notify?.(`已选择: ${cardId}。请开始新对话即可生效。`, "success")
+      ctx.ui?.notify?.(`已选择: ${cardId}。开始新对话即可生效。`, "success")
+    },
+  })
+
+  // ==================== /reset 命令（同时重置 rp-engine 和 PI 上下文） ====================
+  pi.registerCommand("reset", {
+    description: "重置当前会话和 PI 上下文",
+    handler: (_args, ctx) => {
+      const sid = sessionIdRef.current
+      if (sid) {
+        const session = app.stateStore.getSession(sid)
+        if (session) {
+          session.history = []
+          session.runtimeStatus.phase = "idle"
+        }
+        app.stateStore.persist(sid)
+      }
+      sessionIdRef.current = ""
+      cardIdRef.current = ""
+      _initDone = false
+      ctx?.ui?.notify?.("会话已重置，下次对话将重新初始化", "success")
     },
   })
 
