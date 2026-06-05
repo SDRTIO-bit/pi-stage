@@ -258,7 +258,7 @@ export function createApp(config: AppConfig = {}): App {
           layer: "L2-enhanced",
           source: `世界书触发: ${entry.name}`,
           content: entry.content,
-          priority: 15,
+          priority: 85, // 靠近末尾，仅高于状态变量(90)，最大化静态前缀缓存命中
           attentionWeight: 0.7,
         }),
       )
