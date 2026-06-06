@@ -8,6 +8,7 @@ import { readFileSync, existsSync, readdirSync, statSync, createReadStream } fro
 import { join, extname, basename } from "node:path"
 import { createInterface } from "node:readline"
 import { exec } from "node:child_process"
+import { createHash } from "node:crypto"
 import type { CardManager } from "./card-manager.js"
 import type { StateStore } from "./state-store.js"
 
@@ -23,6 +24,22 @@ const MIME: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".png": "image/png",
   ".json": "application/json",
+}
+
+interface FileCacheEntry {
+  content: Buffer
+  etag: string
+  mtime: number
+}
+const fileCache = new Map<string, FileCacheEntry>()
+
+function getCachedFile(filePath: string): FileCacheEntry | null {
+  const cached = fileCache.get(filePath)
+  if (!cached) return null
+  try {
+    if (statSync(filePath).mtimeMs !== cached.mtime) return null
+  } catch { return null }
+  return cached
 }
 
 export function createRPWebServer(
@@ -89,7 +106,18 @@ export function createRPWebServer(
     }
 
     const ext = extname(filePath).toLowerCase()
-    let content = readFileSync(filePath)
+    let cached = getCachedFile(filePath)
+    let content: Buffer
+    let etag: string
+    if (cached) {
+      content = cached.content
+      etag = cached.etag
+    } else {
+      content = readFileSync(filePath)
+      const mtime = statSync(filePath).mtimeMs
+      etag = createHash("md5").update(content).digest("hex").slice(0, 12)
+      fileCache.set(filePath, { content, etag, mtime })
+    }
     if (ext === ".html" && rpToken) {
       content = Buffer.from(
         content.toString().replace(
@@ -97,10 +125,12 @@ export function createRPWebServer(
           `<script>window.RP_TOKEN="${rpToken}";</script></head>`,
         ),
       )
+      etag = createHash("md5").update(content).digest("hex").slice(0, 12)
     }
     res.writeHead(200, {
       "Content-Type": MIME[ext] || "application/octet-stream",
-      "Cache-Control": "no-cache, no-store, must-revalidate",
+      "Cache-Control": "public, max-age=0, must-revalidate",
+      ETag: etag,
     })
     res.end(content)
   }

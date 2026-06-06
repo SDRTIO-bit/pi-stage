@@ -20,8 +20,9 @@ LLM-neutral roleplay runtime。TypeScript，ESM 模块，`npx tsx` 直接运行�
 | Phase 8 | TF-IDF 检索 + Collector 拆分 | worldbook TF-IDF + collectors/format-rules + state-variables |
 | Phase 9 | 会话存储项目级化 | PiJsonlStorage / JSONL 统一存储 / 迁移脚本 |
 | Phase 10 | 运行时缺陷修复 + 预设系统优化 | 卡切换修复 / 预算扩容 / 预设格式清理 / 优先级强化 |
+| Phase 11 | PHI Steering + 注意力刷新 + 对话压缩 | Steering collector / 轮换信号 / 压缩 / 会话恢复 |
 
-**当前**: 观测期 — 收集真实对话数据，暂不新增功能。
+**当前**: Phase 11 完成。Steering 机制每轮注入格式检查点，系统提示静态可缓存，对话 20+ 轮自动压缩。
 
 ## 已知问题与修复 (2026-06-05)
 
@@ -102,14 +103,15 @@ interface Collector {
 
 管线流程：`collect → prioritize → schedule → render → trace`
 
-当前注册的 5 个 Collector（按优先级）：
+当前注册的 Collector（按优先级）：
 
 | Collector | 层 | 优先级 | 降级策略 | 内容来源 |
 |-----------|-----|--------|----------|----------|
 | card-base | L0-survival | 0 | drop | composeCardBase() 生成 |
 | format-rules | L0-survival | 2 | summarize | 卡目录 FORMAT_RULES.md |
 | rp-skills | L1-stable | 3-8 | summarize | 卡目录 skills/rp-engine/*.md |
-| worldbook-trigger | L2-enhanced | 15 | truncate | TF-IDF/关键词 检索触发条目 |
+| worldbook-trigger | L2-enhanced | 15 | truncate | TF-IDF/关键词 检索触发条目（RP 模式下禁用） |
+| **steering-checkpoint** | L2-enhanced | 87 | — | 格式检查点 + 刷新信号 + 工具提醒 + 格式纠偏 |
 | state-variables | L1-stable | 90 | compress | session.activatedCards 变量 |
 
 ### 4. PI 扩展事件流
@@ -117,14 +119,18 @@ interface Collector {
 ```
 session_start        → 懒初始化兜底 + RP Web 启动
 before_agent_start   → ★ 核心：rpGuard + pipeline.assemble() + PI 指令
-input                → 用户消息记录到 history
+                       (pipeline 含 steering-checkpoint collector, 每轮注入格式检查点)
+input                → 记录用户消息到 history + 递增轮次计数器
 message_end          → 格式纪律检查（判定块闭合/星号配对/过短回复）
-turn_end             → Agent 管线 + 持久化 + 双写（中心 + 卡目录）
-session_before_compact → 角色状态变量保护
+                       → 问题存入 _lastFormatIssues，由下轮 steering 注入（不写 history）
+turn_end             → Agent 管线 + 持久化 + logSnapshot
+session_before_compact → 压缩对话历史 + 角色状态变量保护
 session_shutdown     → 最终持久化
 ```
 
 **懒初始化策略**：不依赖 `session_start`（PI 可能不触发），在 `before_agent_start` 首次调用时初始化。
+
+**启动时会话恢复**：`ensureSession()` 读取 `.pi/current-session.json`，若 session 数据文件存在且 history 非空则自动恢复，否则创建新 session。
 
 **Card 优先级**：用户指定 → registry active → 导入卡（排除种子卡）→ 种子卡 → "hero"
 
@@ -132,9 +138,12 @@ session_shutdown     → 最终持久化
 ```
 rpGuard（最高优先级角色扮演指令 — 硬编码）
   + result.prompt（ContextPipeline.assemble() 输出 — 动态）
+  + steering-checkpoint（格式检查点 + 刷新信号 — 静态部分缓存命中）
   + "---\n## PI 系统指令"
   + ev.systemPrompt（PI 原始系统指令 — 含工具声明）
 ```
+
+**缓存策略**：格式检查点、刷新信号（等长 410 字节 padding）、工具提醒均为静态内容，轮换信号确定性轮转，确保 Anthropic prompt cache 每轮命中。格式纠偏（上轮问题）仅在有问题时追加，此时该轮缓存 miss。
 
 ### 5. 格式纪律检查（message_end）
 
@@ -143,9 +152,24 @@ rpGuard（最高优先级角色扮演指令 — 硬编码）
 2. `*` 星号动作标注配对
 3. 回复长度 < 10 字符 → 警告
 
-发现问题后以 `system: [格式警告] ...` 追加到 history。
+发现问题后存入 `_lastFormatIssues`，由下轮 steering-checkpoint collector 以 `[格式纠偏]` 注入到 prompt 末尾（priority 87，紧贴生成位置），而非写入对话历史。无问题时 steering 内容字节完全一致 → 缓存命中。
 
-### 6. 配置系统
+### 6. PHI Steering 注入机制
+
+来自酒馆 PHI + PI Steering 的设计：格式规则在 system prompt 的 priority 2 位置（在 86KB skill 之后）对话 4 轮后被注意力衰减淹没。解决方案是在每轮 LLM 调用前将关键指令注入到注意力近区。
+
+**Steering 内容组成**（每轮）：
+1. **输出结构标签** — 从卡 skill 和预设文件提取的 `<tag>` 序列（如 `<draft_notes>` → `<gametxt>` → `<Auto>` → `<action>`）
+2. **关键约束** — 从 presets 提取的"必须/禁止/不得/红线"句式（最多 10 条）
+3. **注意力刷新信号** — 4 个等长（410 字节）轮换信号，每轮一个，抑制模型习惯化
+4. **工具提醒** — search_worldbook、read_state、update_state、roll_dice 的按需提示
+5. **格式纠偏**（条件性）— 仅上轮有格式问题时追加，此时该轮缓存 miss
+
+**实现**：通过 `Collector` 接口注册 `steering-checkpoint`（priority 87），由 `ContextPipeline.assemble()` 收集并调度。世界书检索从 pipeline 中移除（`worldbookTriggerCollector: false`），模型通过 `rp_engine__search_worldbook` 工具按需查询。
+
+**缓存效果**：世界书触发词不再出现在 system prompt 中 → prompt 变为静态 → Anthropic prompt cache 每轮命中（读取成本 ~0.025 元/M vs 写入 ~3 元/M）。
+
+### 7. 配置系统
 
 `.rpconfig.json` — 首次运行自动生成，支持字段：
 
@@ -164,13 +188,13 @@ rpGuard（最高优先级角色扮演指令 — 硬编码）
 | `rp_web_port` | 3012 | RP Web 服务端口 |
 | `rp_web_host` | "0.0.0.0" | RP Web 绑定地址 |
 
-### 7. 观测系统
+### 8. 观测系统
 
 - **快照写入**：`src/observability/prompt-snapshot.ts` — 每轮 `before_agent_start` 后调用 `logSnapshot(dir, sessionId, pipelinePhase)`，写入 `.pi/snapshots/{sid}/{ts}.json`
 - **批量分析**：`node scripts/analyze-snapshots.mjs [--session=sid]` — 统计 token 分布、collector 占比、世界书命中率、降级次数
 - **快照结构**：`{ timestamp, sessionId, pipelinePhase: { phase, prompt, displayPrompt, status, collectorBytes } }`
 
-### 8. 世界书双检索
+### 9. 世界书双检索
 
 `searchByKeywords(query)` — 子串匹配，支持 AND/OR
 
@@ -194,6 +218,11 @@ src/
 ├── skill-generator.ts         # 世界书条目 → 5 个 skill 分类
 ├── server.ts                  # HTTP 独立服务入口
 ├── rp-web-server.ts           # RP WebSocket 服务器
+│
+├── helpers/                   # 工具函数（无状态，零依赖）
+│   ├── checkpoint-extractor.ts # 从 skill/preset 提取格式检查点 + Steering 构建
+│   ├── refresh-signals.ts     # 等长轮换注意力刷新信号（410 字节 padding）
+│   └── compression.ts         # 对话历史压缩（保留最近 5 轮）
 │
 ├── context/
 │   ├── pipeline.ts            # assemble() + collectorBytes 报告
@@ -330,6 +359,10 @@ PiJsonlStorage 实现 `StorageProvider` 接口，被 `StateStore` 通过 DI 注�
 ### Skill Budget 不匹配
 
 卡专属 5 个 skill 文件合计 ~380KB，但 pipeline budget hard 仅 40KB。调度器会严重截断 skill 内容，导致 AI 缺乏世界观上下文。详见 `docs/skill-problem-report.md`。
+
+### NSFW 预设矛盾
+
+`1.md` 中 `<nsfw_rule>` 要求细化 NSFW 内容，但 `<anti_cliche>` 第 174 行的"不得使用淫秽/过度直白措辞"与之矛盾，导致 AI 生成 NSFW 时保守。需统一两套规则的使用范围。
 
 ### AI 读文件
 

@@ -31,6 +31,7 @@ export class CardManager {
   private memMeta = new Map<string, CardMeta>()
   private activeOrder: string[] = []
   private _stateStore: StateStore
+  private cardNameCache = new Map<string, string>()
 
   private get stateStore(): StateStore {
     return this._stateStore
@@ -47,6 +48,7 @@ export class CardManager {
   /** 使缓存失效，下次访问时重新读取磁盘 */
   invalidateCache(): void {
     this.cachedRegistry = null
+    this.cardNameCache.clear()
   }
 
   getRegistry(): CardRegistryData {
@@ -111,18 +113,23 @@ export class CardManager {
   }
 
   getCardName(cardId: string): string {
+    const cached = this.cardNameCache.get(cardId)
+    if (cached) return cached
+
     const card = this.getRegistry().cards[cardId]
     if (!card) return cardId
     const configPath = join(card.dir, "config.json")
+    let name = basename(card.dir)
     if (existsSync(configPath)) {
       try {
         const config = JSON.parse(readFileSync(configPath, "utf-8"))
-        if (config.character?.name) return config.character.name
+        if (config.character?.name) name = config.character.name
       } catch {
         /* ignore */
       }
     }
-    return basename(card.dir)
+    this.cardNameCache.set(cardId, name)
+    return name
   }
 
   getCardWorldbookDir(cardId: string): string | null {

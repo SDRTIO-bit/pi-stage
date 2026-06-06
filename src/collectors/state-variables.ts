@@ -1,6 +1,7 @@
 // ============================================================
 // State Collector — 当前角色变量作为独立 PromptNode
-// 放在 pipeline 末尾，减少对缓存的破坏
+// 放在 pipeline 末尾（priority 90），世界书触发词条（priority 85）之前
+// 动态内容集中末尾，最大化前面的静态 prefix cache 命中
 // ============================================================
 
 import type { Collector } from "../context/pipeline.js"

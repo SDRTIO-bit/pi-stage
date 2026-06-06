@@ -91,7 +91,8 @@ flowchart TB
 | card-base | L0-survival | 0 | drop | 系统提示词 |
 | format-rules | L0-survival | 2 | summarize | 格式规则（来自 FORMAT_RULES.md） |
 | rp-skills | L1-stable | 3-8 | summarize | 卡专属 5 个 skill 文件 |
-| worldbook-trigger | L2-enhanced | 15 | truncate | TF-IDF/关键词 匹配触发条目 |
+| worldbook-trigger | L2-enhanced | 15 | truncate | TF-IDF/关键词 匹配触发条目（可通过 feature flag 禁用） |
+| **steering-checkpoint** | L2-enhanced | 87 | — | 格式检查点 + 注意力刷新信号 + 工具提醒（每轮注入） |
 | state-variables | L1-stable | 90 | compress | 角色状态变量 |
 
 ### 双预算调度
@@ -162,22 +163,26 @@ flowchart TB
 ```
 session_start        → 懒初始化兜底 + RP Web 启动
 before_agent_start   → ★ 核心：rpGuard + pipeline.assemble() + PI 指令
-input                → 用户消息记录
-message_end          → 格式纪律检查
+                       (pipeline 含 steering-checkpoint collector，每轮注入格式检查点)
+input                → 用户消息记录 + 轮次计数器递增
+message_end          → 格式纪律检查 → 问题存入 _lastFormatIssues（由下轮 steering 注入）
 turn_end             → Agent 管线 + 持久化 + logSnapshot
-session_before_compact → 状态变量保护
+session_before_compact → 压缩对话历史 + 状态变量保护
 session_shutdown     → 最终持久化
 ```
 
-懒初始化策略：不依赖 `session_start`（PI 可能不触发），在 `before_agent_start` 首次调用时 init。
+懒初始化策略：不依赖 `session_start`（PI 可能不触发），在 `before_agent_start` 首次调用时 init。启动时通过 `.pi/current-session.json` 自动恢复上次会话。
 
 System Prompt 组装：
 ```
-rpGuard（最高优先级角色扮演指令）
+rpGuard（最高优先级角色扮演指令 — 硬编码）
   + result.prompt（ContextPipeline 输出：世界观 + Skills + 格式 + 状态）
+  + steering-checkpoint（格式检查点 + 刷新信号 + 工具提醒 — 静态部分可缓存）
   + "---\n## PI 系统指令"
   + ev.systemPrompt（PI 原始系统指令，含工具声明）
 ```
+
+**缓存策略**：世界书触发词通过 feature flag 从 pipeline 中移除，模型改用 `search_worldbook` 工具按需检索。格式检查点、刷新信号（4 个等长 410 字节信号确定性轮转）、工具提醒均为静态内容，确保 Anthropic prompt cache 每轮命中。
 
 ## 一对一模型
 
@@ -224,12 +229,17 @@ src/
 ├── server.ts                  # HTTP 独立服务入口
 ├── rp-web-server.ts           # RP WebSocket 服务器
 │
+├── helpers/                   # 无状态工具函数（零硬编码 RP 内容）
+│   ├── checkpoint-extractor.ts # 从 skill/preset 提取格式标签 + 约束
+│   ├── refresh-signals.ts     # 等长轮换注意力刷新信号（410 字节 padding）
+│   └── compression.ts         # 对话历史压缩（保留最近 5 轮完整）
+│
 ├── context/
 │   ├── pipeline.ts            # assemble() 主流程 + collectorBytes 报告
 │   ├── scheduler.ts           # 双预算调度器
 │   └── prompt-node.ts         # PromptNode 工厂
 │
-├── collectors/                # ★ 独立 Collector（NEW）
+├── collectors/                # ★ 独立 Collector
 │   ├── format-rules.ts        # 格式规则 collector
 │   └── state-variables.ts     # 角色状态 collector
 │
@@ -251,7 +261,7 @@ src/
 ├── commands/
 │   └── index.ts               # 用户命令 (/card /status /reset 等)
 │
-├── observability/             # ★ 观测系统（NEW）
+├── observability/             # ★ 观测系统
 │   └── prompt-snapshot.ts     # 每轮 prompt 快照写入
 │
 ├── infrastructure/

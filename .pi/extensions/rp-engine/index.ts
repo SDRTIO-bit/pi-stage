@@ -8,7 +8,7 @@
  * 在 before_agent_start 首次调用时初始化一切。
  */
 import { join } from "node:path"
-import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import type { ExtensionAPI, ExtensionContext, BeforeAgentStartEvent } from "@earendil-works/pi-coding-agent"
 import { createApp, type App } from "../../../src/composition-root.js"
 import { createPiTools } from "../../../src/tools.js"
@@ -20,10 +20,22 @@ import {
 } from "../../../src/cards/skill-writer.js"
 import { logSnapshot } from "../../../src/observability/prompt-snapshot.js"
 import { loadRPConfig } from "../../../src/config.js"
+import { extractStructureTags, extractConstraints, buildSteeringContent } from "../../../src/helpers/checkpoint-extractor.js"
+import { getRefreshSignal } from "../../../src/helpers/refresh-signals.js"
+import { compressHistory } from "../../../src/helpers/compression.js"
+import { createNode } from "../../../src/context/prompt-node.js"
+import type { Collector } from "../../../src/context/pipeline.js"
 
 // ---- 模块级单次初始化 ----
 let _app: App | null = null
 let _initDone = false
+
+// ---- PHI Steering 检查点缓存 ----
+let _structureTags: string[] = []
+let _constraints: string[] = []
+let _roundCounter = 0
+let _lastFormatIssues: string[] = []
+let _steeringCollectorRegistered = false
 
 function getApp(): App {
   if (!_app) {
@@ -47,6 +59,7 @@ function getApp(): App {
       features: {
         formatRulesCollector: rpConfig.features?.format_rules_collector,
         stateCollector: rpConfig.features?.state_collector,
+        worldbookTriggerCollector: false, // 世界书改由 Steering 注入，保持 system prompt 静态缓存
       },
     })
   }
@@ -93,8 +106,36 @@ export default function (pi: ExtensionAPI) {
   function ensureSession(userPrompt?: string): string {
     if (sessionIdRef.current) return sessionIdRef.current
 
-    const sid = `pi-session-${Date.now()}`
+    // 尝试恢复上次会话
+    const stateDir = join(process.cwd(), ".pi")
+    const sessionStateFile = join(stateDir, "current-session.json")
+    let restoredSid = ""
+    if (existsSync(sessionStateFile)) {
+      try {
+        const saved = JSON.parse(readFileSync(sessionStateFile, "utf-8"))
+        if (saved.sessionId && saved.cardId) {
+          // 验证 session 数据文件存在
+          const existingIds = app.stateStore.listSessions()
+          if (existingIds.includes(saved.sessionId)) {
+            const loaded = app.stateStore.load(saved.sessionId)
+            if (loaded && loaded.history.length > 0) {
+              restoredSid = saved.sessionId
+              console.log(`[RP] 恢复会话: ${restoredSid}, ${loaded.history.length} 条历史`)
+            }
+          }
+        }
+      } catch { /* 文件损坏，忽略 */ }
+    }
+
+    const sid = restoredSid || `pi-session-${Date.now()}`
     sessionIdRef.current = sid
+
+    // 持久化当前 session ID
+    if (!restoredSid) {
+      try {
+        mkdirSync(stateDir, { recursive: true })
+      } catch { /* exists */ }
+    }
 
     // 一对一：选卡并独占激活
     const cardId = resolveCardId()
@@ -113,21 +154,41 @@ export default function (pi: ExtensionAPI) {
         if (!hasCardSkills(cardDir)) {
           generateCardSkills(cardDir, wbDir)
         }
+
+        // 缓存格式检查点（仅解析一次，后续每轮复用）
+        const presetsDir = join(process.cwd(), ".pi", "presets")
+        _structureTags = extractStructureTags(cardDir, presetsDir)
+        _constraints = extractConstraints(cardDir, presetsDir)
+        console.log(`[RP] 检查点已缓存: ${_structureTags.length} 个结构标签, ${_constraints.length} 条约束`)
       }
     }
 
     // 创建 session 并关联 cardId + 激活卡片状态
-    const session = app.stateStore.createSession(sid)
+    const session = restoredSid
+      ? app.stateStore.getSession(sid)!  // 从磁盘恢复，不覆盖已加载的历史
+      : app.stateStore.createSession(sid)  // 新建 session
+    if (!session) throw new Error(`Session ${sid} not found after load`)
+
     session.cardId = cardId
-    session.activatedCards.set(cardId, {
-      cardId,
-      variables: {},
-      lastUpdated: Date.now(),
-    })
+    if (!session.activatedCards.has(cardId)) {
+      session.activatedCards.set(cardId, {
+        cardId,
+        variables: {},
+        lastUpdated: Date.now(),
+      })
+    }
     if (userPrompt) {
       app.stateStore.appendHistory(sid, `user: ${userPrompt}`)
     }
     app.stateStore.persist(sid)
+
+    // 持久化当前 session ID，支持重启后恢复
+    if (!restoredSid) {
+      try {
+        writeFileSync(sessionStateFile, JSON.stringify({ sessionId: sid, cardId }, null, 2), "utf-8")
+      } catch { /* ignore */ }
+    }
+
     if (cardDir) {
       app.cardSessionStore.createSession(cardDir, sid)
       const cs = app.cardSessionStore.getSession(cardDir, sid)
@@ -135,6 +196,65 @@ export default function (pi: ExtensionAPI) {
         cs.cardId = cardId
         app.cardSessionStore.persist(cardDir, cs)
       }
+    }
+
+    // 注册 Steering 检查点 collector（priority 87，紧贴生成位置）
+    // 替代 input handler 中的 pi.sendUserMessage()，避免递归死锁
+    if (!_steeringCollectorRegistered) {
+      _steeringCollectorRegistered = true
+      const steeringCollector: Collector = {
+        name: "steering-checkpoint",
+        collect: async (collectSessionId: string) => {
+          if (collectSessionId !== sessionIdRef.current) return []
+
+          try {
+            // 1. 注意力刷新信号（等长轮换，不破坏 system prompt 缓存）
+            const refreshSignal = getRefreshSignal(_roundCounter)
+
+            // 2. 上轮格式问题（由 message_end 存入，仅在有问题时非空）
+            let formatWarning = ""
+            if (_lastFormatIssues.length > 0) {
+              formatWarning = `[格式纠偏] 上一条回复存在以下问题，本轮必须修正:\n${_lastFormatIssues.map((i) => "  - " + i).join("\n")}`
+              _lastFormatIssues = []
+            }
+
+            // 3. 可用工具提醒（静态内容，不破坏缓存）
+            const toolHints = `[可用工具 — 按需主动调用]
+  • rp_engine__search_worldbook — 关键词/语义搜索世界书条目（场景、NPC、设定等）
+  • rp_engine__read_state — 读取当前角色变量（属性、状态、关系等）
+  • rp_engine__update_state — 更新角色变量（剧情推进后及时更新）
+  • rp_engine__roll_dice — 投骰判定（战斗、技能、非凡等需要概率的场合）`
+
+            // 4. 构建 Steering 内容（世界书由工具按需检索，不注入 system prompt）
+            const steeringContent = buildSteeringContent(
+              _structureTags,
+              _constraints,
+              "",
+              refreshSignal,
+              toolHints,
+            )
+
+            // 无格式问题时 fullContent 字节完全一致 → system prompt 缓存命中
+            const fullContent = [steeringContent, formatWarning].filter(Boolean).join("\n\n")
+            if (!fullContent.trim()) return []
+
+            console.log(`[RP] 第${_roundCounter}轮 Steering 注入 (${fullContent.length} 字符, 缓存${formatWarning ? "miss" : "hit"})`)
+            return [
+              createNode({
+                layer: "L2-enhanced",
+                source: "Steering 检查点",
+                content: fullContent,
+                priority: 87,
+                attentionWeight: 0.95,
+              }),
+            ]
+          } catch (err) {
+            console.warn("[RP] Steering collector 失败:", err instanceof Error ? err.message : String(err))
+            return []
+          }
+        },
+      }
+      app.contextPipeline.registerCollector(steeringCollector)
     }
 
     _initDone = true
@@ -157,13 +277,20 @@ export default function (pi: ExtensionAPI) {
   })
 
   // ==================== session_before_compact ====================
-  // 在 PI 压缩对话前，保护当前角色状态变量不丢失
+  // 在 PI 压缩对话前: 先压缩对话历史，再保护状态变量
   pi.on("session_before_compact", (_ev) => {
     const sid = sessionIdRef.current
     if (!sid) return
 
     const session = app.stateStore.getSession(sid)
     if (!session?.cardId) return
+
+    // 压缩对话历史: 保留最近 5 轮完整，早期轮次压缩为摘要
+    const originalLen = session.history.length
+    session.history = compressHistory(session.history)
+    if (session.history.length !== originalLen) {
+      console.log(`[RP] 历史已压缩: ${originalLen} -> ${session.history.length} 条`)
+    }
 
     const cardState = session.activatedCards.get(session.cardId)
     if (cardState && Object.keys(cardState.variables).length > 0) {
@@ -179,24 +306,43 @@ export default function (pi: ExtensionAPI) {
     const sid = sessionIdRef.current
     if (!sid) return
 
-    // 只检查 assistant 消息
     const msg = ev as any
-    const content = msg?.message?.content || msg?.text || ""
-    if (!content || typeof content !== "string") return
+    const rawContent: unknown = msg?.message?.content || msg?.text || ""
+
+    // 处理两种 content 格式: string 或 ContentBlock[] [{type:"text", text:"..."}]
+    let content = ""
+    if (typeof rawContent === "string") {
+      content = rawContent
+    } else if (Array.isArray(rawContent)) {
+      content = rawContent
+        .filter((block: any) => block?.type === "text")
+        .map((block: any) => block.text ?? "")
+        .join("\n")
+    }
+
+    if (!content.trim()) return
 
     const issues: string[] = []
 
-    // 检查 1：是否有未闭合的判定块
-    if ((content.match(/<判定/g) || []).length !== (content.match(/<\/判定>/g) || []).length) {
-      issues.push("判定块未闭合，请确保 <判定> 与 </判定> 配对")
+    // 通用标签配对检查：从 AI 回复中提取所有 <tag> / </tag>，验证开闭配对
+    // 支持 ASCII 和中文字符名，适配不同角色卡的格式体系
+    const tagCounts = new Map<string, number>()
+    const tagRe = /<\/?([\w一-鿿][\w一-鿿-]*)>/g
+    let m: RegExpExecArray | null
+    while ((m = tagRe.exec(content)) !== null) {
+      const name = m[1]
+      const isClose = m[0].startsWith("</")
+      tagCounts.set(name, (tagCounts.get(name) ?? 0) + (isClose ? -1 : 1))
+    }
+    for (const [name, delta] of tagCounts) {
+      if (delta > 0) {
+        issues.push(`<${name}> 未闭合 (缺 ${delta} 个 </${name}>)`)
+      } else if (delta < 0) {
+        issues.push(`</${name}> 多余 (多 ${Math.abs(delta)} 个)`)
+      }
     }
 
-    // 检查 2：是否有未闭合的星号动作标注
-    if ((content.match(/\*/g) || []).length % 2 !== 0) {
-      issues.push("星号动作标注未配对，检查是否遗漏了闭合 *")
-    }
-
-    // 检查 3：回复是否为空或过短
+    // 回复是否为空或过短
     if (content.trim().length < 10) {
       issues.push("回复过短，可能未正确生成内容")
     }
@@ -204,10 +350,10 @@ export default function (pi: ExtensionAPI) {
     // 记录 AI 回复到历史
     app.stateStore.appendHistory(sid, `assistant: ${content}`)
 
+    // 格式问题存入模块变量，由下轮 steering-checkpoint collector 注入
     if (issues.length > 0) {
-      const warning = `[格式警告] 上一条回复存在以下问题：\n${issues.map((i) => "  - " + i).join("\n")}`
-      app.stateStore.appendHistory(sid, `system: ${warning}`)
-      console.log(`[RP] 格式检查: ${issues.length} 个问题`)
+      _lastFormatIssues = issues
+      console.log(`[RP] 格式检查: ${issues.length} 个问题，将在下轮 Steering 中注入`)
     }
   })
 
@@ -250,8 +396,7 @@ export default function (pi: ExtensionAPI) {
       rpGuard +
       "\n" +
       "[角色卡] " + cardName + " (" + cardId + ")\n" +
-      "请根据角色卡设定，以第一人称/小说体进行沉浸式角色扮演。\n" +
-      "使用 <判定></判定> 块包含系统判定，使用 *动作描述* 表达动作。\n"
+      "请根据角色卡设定进行沉浸式角色扮演。\n"
     const separator = "\n\n---\n## PI 系统指令\n"
     console.log(`[RP] before_agent_start: fallback prompt (${fallbackPrompt.length} chars)`)
     return {
@@ -264,9 +409,11 @@ export default function (pi: ExtensionAPI) {
     ensureSession()
     const sid = sessionIdRef.current
     const originalContent = ev?.text || ev?.content || ev?.value || ""
-    if (originalContent && !originalContent.startsWith("/")) {
-      app.stateStore.appendHistory(sid, `user: ${originalContent}`)
-    }
+    if (!originalContent || originalContent.startsWith("/")) return
+
+    // 记录用户消息
+    app.stateStore.appendHistory(sid, `user: ${originalContent}`)
+    _roundCounter++
   })
 
   // ==================== turn_end ====================
@@ -305,6 +452,10 @@ export default function (pi: ExtensionAPI) {
       sessionIdRef.current = ""
       cardIdRef.current = ""
       _initDone = false
+      _roundCounter = 0
+      _lastFormatIssues = []
+      // 清除持久化的 session ID，重启后创建新会话
+      try { const sf = join(process.cwd(), ".pi", "current-session.json"); if (existsSync(sf)) writeFileSync(sf, "{}", "utf-8") } catch { /* ignore */ }
     }
   })
 
@@ -446,6 +597,8 @@ export default function (pi: ExtensionAPI) {
       sessionIdRef.current = ""
       cardIdRef.current = ""
       _initDone = false
+      _roundCounter = 0
+      _lastFormatIssues = []
       ctx.ui?.notify?.(`已选择: ${cardId}。开始新对话即可生效。`, "success")
     },
   })
@@ -466,6 +619,10 @@ export default function (pi: ExtensionAPI) {
       sessionIdRef.current = ""
       cardIdRef.current = ""
       _initDone = false
+      _roundCounter = 0
+      _lastFormatIssues = []
+      // 清除持久化的 session ID，重启后创建新会话
+      try { const sf = join(process.cwd(), ".pi", "current-session.json"); if (existsSync(sf)) writeFileSync(sf, "{}", "utf-8") } catch { /* ignore */ }
       ctx?.ui?.notify?.("会话已重置，下次对话将重新初始化", "success")
     },
   })

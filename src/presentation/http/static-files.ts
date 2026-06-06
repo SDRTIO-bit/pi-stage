@@ -1,9 +1,11 @@
 // ============================================================
 // 静态文件服务 — 前端 HTML/CSS/JS
+// 内存缓存 + ETag，减少磁盘 I/O
 // ============================================================
 
 import * as fs from "node:fs"
 import * as path from "node:path"
+import * as crypto from "node:crypto"
 import type * as http from "node:http"
 
 const MIME: Record<string, string> = {
@@ -16,6 +18,34 @@ const MIME: Record<string, string> = {
 }
 
 const FRONTEND_DIR = path.resolve(import.meta.dirname!, "..", "..", "frontend")
+
+interface CachedFile {
+  content: Buffer
+  etag: string
+  mtime: number
+}
+
+const fileCache = new Map<string, CachedFile>()
+
+function getCached(filePath: string): CachedFile | null {
+  const cached = fileCache.get(filePath)
+  if (!cached) return null
+  try {
+    const stat = fs.statSync(filePath)
+    if (stat.mtimeMs !== cached.mtime) return null // 文件已修改，缓存失效
+  } catch {
+    return null
+  }
+  return cached
+}
+
+function setCached(filePath: string, content: Buffer): CachedFile {
+  const mtime = fs.statSync(filePath).mtimeMs
+  const etag = crypto.createHash("md5").update(content).digest("hex").slice(0, 12)
+  const entry: CachedFile = { content, etag, mtime }
+  fileCache.set(filePath, entry)
+  return entry
+}
 
 export function serveStaticFile(req: http.IncomingMessage, res: http.ServerResponse): boolean {
   const parsedUrl = new URL(req.url ?? "", "http://localhost")
@@ -30,17 +60,33 @@ export function serveStaticFile(req: http.IncomingMessage, res: http.ServerRespo
     return true
   }
 
-
   const serveFile = (filePath: string): boolean => {
     if (!fs.existsSync(filePath)) return false
+
+    let cached = getCached(filePath)
+    if (!cached) {
+      cached = setCached(filePath, fs.readFileSync(filePath))
+    }
+
     const ext = path.extname(filePath)
-    // 禁用缓存，确保前端修改立即可见
+    const ifNoneMatch = req.headers["if-none-match"]
+
+    // ETag 匹配 → 304 Not Modified
+    if (ifNoneMatch === cached.etag) {
+      res.writeHead(304, {
+        "Cache-Control": "public, max-age=0, must-revalidate",
+        ETag: cached.etag,
+      })
+      res.end()
+      return true
+    }
+
     res.writeHead(200, {
       "Content-Type": MIME[ext] ?? "application/octet-stream",
-      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-      "Pragma": "no-cache",
+      "Cache-Control": "public, max-age=0, must-revalidate",
+      ETag: cached.etag,
     })
-    res.end(fs.readFileSync(filePath))
+    res.end(cached.content)
     return true
   }
 

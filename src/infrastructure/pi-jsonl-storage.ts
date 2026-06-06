@@ -254,9 +254,19 @@ export class PiJsonlStorage implements StorageProvider {
           startedAt = event.timestamp ? new Date(event.timestamp).getTime() : Date.now()
         } else if (event.type === "message") {
           const role = event.message?.role
-          const text = event.message?.content?.[0]?.text
-          if (role && text !== undefined) {
-            history.push(`${role}: ${text}`)
+          const content = event.message?.content
+          if (role && content) {
+            if (typeof content === "string") {
+              history.push(`${role}: ${content}`)
+            } else if (Array.isArray(content)) {
+              const text = content
+                .filter((b: any) => b?.type === "text")
+                .map((b: any) => b.text ?? "")
+                .join("\n")
+              if (text) history.push(`${role}: ${text}`)
+            } else if (content?.[0]?.text) {
+              history.push(`${role}: ${content[0].text}`)
+            }
           }
         }
       } catch { continue }
