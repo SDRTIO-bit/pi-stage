@@ -1077,10 +1077,10 @@ function scanRemoteUrls(
     }
   }
 
-  for (const s of regexScripts || []) {
+  for (const s of (Array.isArray(regexScripts) ? regexScripts : [])) {
     collect(s.replaceString as string, `regex: ${s.scriptName}`)
   }
-  for (const s of tavernHelper || []) {
+  for (const s of (Array.isArray(tavernHelper) ? tavernHelper : [])) {
     collect(s.content as string, `tavern: ${s.name}`)
   }
 
@@ -1229,7 +1229,9 @@ export function importCardFromFile(filePath: string, options?: ImportOptions): C
 
   // 预处理脚本
   const regexScripts = (extracted.regex_scripts as Array<Record<string, unknown>>) || []
-  const tavernHelper = (extracted.tavern_helper as Array<Record<string, unknown>>) || []
+  const tavernHelper = Array.isArray(extracted.tavern_helper)
+    ? (extracted.tavern_helper as Array<Record<string, unknown>>)
+    : []
 
   const regexHooksCount = preprocessRegexScripts(regexScripts, cardDir)
   const variableSchemaCount = preprocessTavernScripts(tavernHelper, cardDir, statePath)
