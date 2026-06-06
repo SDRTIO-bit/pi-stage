@@ -324,17 +324,25 @@ export default function (pi: ExtensionAPI) {
 
     const issues: string[] = []
 
-    // 检查 1：是否有未闭合的判定块
-    if ((content.match(/<判定/g) || []).length !== (content.match(/<\/判定>/g) || []).length) {
-      issues.push("判定块未闭合，请确保 <判定> 与 </判定> 配对")
+    // 通用标签配对检查：从 AI 回复中提取所有 <tag> / </tag>，验证开闭配对
+    // 支持 ASCII 和中文字符名，适配不同角色卡的格式体系
+    const tagCounts = new Map<string, number>()
+    const tagRe = /<\/?([\w一-鿿][\w一-鿿-]*)>/g
+    let m: RegExpExecArray | null
+    while ((m = tagRe.exec(content)) !== null) {
+      const name = m[1]
+      const isClose = m[0].startsWith("</")
+      tagCounts.set(name, (tagCounts.get(name) ?? 0) + (isClose ? -1 : 1))
+    }
+    for (const [name, delta] of tagCounts) {
+      if (delta > 0) {
+        issues.push(`<${name}> 未闭合 (缺 ${delta} 个 </${name}>)`)
+      } else if (delta < 0) {
+        issues.push(`</${name}> 多余 (多 ${Math.abs(delta)} 个)`)
+      }
     }
 
-    // 检查 2：是否有未闭合的星号动作标注
-    if ((content.match(/\*/g) || []).length % 2 !== 0) {
-      issues.push("星号动作标注未配对，检查是否遗漏了闭合 *")
-    }
-
-    // 检查 3：回复是否为空或过短
+    // 回复是否为空或过短
     if (content.trim().length < 10) {
       issues.push("回复过短，可能未正确生成内容")
     }
@@ -388,8 +396,7 @@ export default function (pi: ExtensionAPI) {
       rpGuard +
       "\n" +
       "[角色卡] " + cardName + " (" + cardId + ")\n" +
-      "请根据角色卡设定，以第一人称/小说体进行沉浸式角色扮演。\n" +
-      "使用 <判定></判定> 块包含系统判定，使用 *动作描述* 表达动作。\n"
+      "请根据角色卡设定进行沉浸式角色扮演。\n"
     const separator = "\n\n---\n## PI 系统指令\n"
     console.log(`[RP] before_agent_start: fallback prompt (${fallbackPrompt.length} chars)`)
     return {
