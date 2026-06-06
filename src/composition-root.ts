@@ -54,6 +54,8 @@ export interface AppConfig {
   features?: {
     formatRulesCollector?: boolean
     stateCollector?: boolean
+    /** @default true — 设为 false 则不在 pipeline 中注入世界书触发词（改用 Steering） */
+    worldbookTriggerCollector?: boolean
   }
   /** 种子数据（可覆盖默认的卡片/世界书/正则钩子） */
   seed?: {
@@ -165,6 +167,7 @@ export function createApp(config: AppConfig = {}): App {
   const budget = config.budget ?? { target: 102400, hard: 163840 }
   const retriever = config.retriever ?? {}
   const seed = loadSeed(config)
+  const features = config.features ?? {}
 
   // 1. 基础设施层 — 使用项目级 JSONL 存储
   const storage = new PiJsonlStorage(cwd)
@@ -228,43 +231,46 @@ export function createApp(config: AppConfig = {}): App {
   contextPipeline.registerCollector(demoCollector)
 
   // 注册世界书触发词 collector（关键词 或 TF-IDF 相似度检索）
+  // 可通过 features.worldbookTriggerCollector = false 禁用以改用 Steering 注入
   const useTFIDF = retriever.method !== "keyword"
   const topK = retriever.topK ?? 3
   const maxTokens = retriever.maxTokens ?? 4000
   const contextWindow = retriever.contextWindow ?? 3
 
-  const triggerCollector: Collector = {
-    name: "worldbook-trigger",
-    collect: async (sessionId: string) => {
-      const session = stateStore.getSession(sessionId)
-      if (!session || session.history.length === 0) return []
+  if (features.worldbookTriggerCollector !== false) {
+    const triggerCollector: Collector = {
+      name: "worldbook-trigger",
+      collect: async (sessionId: string) => {
+        const session = stateStore.getSession(sessionId)
+        if (!session || session.history.length === 0) return []
 
-      // 拼接最近 N 轮用户消息作为检索上下文
-      const queryParts: string[] = []
-      for (let i = session.history.length - 1; i >= 0 && queryParts.length < contextWindow; i--) {
-        const entry = session.history[i]
-        if (entry.startsWith("user: ")) queryParts.unshift(entry.slice(6))
-      }
-      if (queryParts.length === 0) return []
-      const query = queryParts.join(" ")
+        // 拼接最近 N 轮用户消息作为检索上下文
+        const queryParts: string[] = []
+        for (let i = session.history.length - 1; i >= 0 && queryParts.length < contextWindow; i--) {
+          const entry = session.history[i]
+          if (entry.startsWith("user: ")) queryParts.unshift(entry.slice(6))
+        }
+        if (queryParts.length === 0) return []
+        const query = queryParts.join(" ")
 
-      const results = useTFIDF
-        ? worldbook.searchBySimilarity(query, { topK, maxTokens })
-        : worldbook.searchByKeywords(query).slice(0, topK)
+        const results = useTFIDF
+          ? worldbook.searchBySimilarity(query, { topK, maxTokens })
+          : worldbook.searchByKeywords(query).slice(0, topK)
 
-      if (results.length === 0) return []
-      return results.map((entry) =>
-        createNode({
-          layer: "L2-enhanced",
-          source: `世界书触发: ${entry.name}`,
-          content: entry.content,
-          priority: 85, // 靠近末尾，仅高于状态变量(90)，最大化静态前缀缓存命中
-          attentionWeight: 0.7,
-        }),
-      )
-    },
+        if (results.length === 0) return []
+        return results.map((entry) =>
+          createNode({
+            layer: "L2-enhanced",
+            source: `世界书触发: ${entry.name}`,
+            content: entry.content,
+            priority: 85, // 靠近末尾，仅高于状态变量(90)，最大化静态前缀缓存命中
+            attentionWeight: 0.7,
+          }),
+        )
+      },
+    }
+    contextPipeline.registerCollector(triggerCollector)
   }
-  contextPipeline.registerCollector(triggerCollector)
 
   // 注册全局预设 collector（引擎级，所有卡共享，优先级高于卡专属 Skill）
   contextPipeline.registerCollector(createGlobalPresetCollector(cwd))
@@ -280,7 +286,6 @@ export function createApp(config: AppConfig = {}): App {
   )
 
   // 注册格式规则 collector（从卡目录 FORMAT_RULES.md 或 skills 提取）
-  const features = config.features ?? {}
   if (features.formatRulesCollector !== false) {
     contextPipeline.registerCollector(createFormatRulesCollector(cardManager, stateStore))
   }

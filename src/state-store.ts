@@ -91,6 +91,7 @@ export class StateStore {
 
     const data = {
       sessionId: session.sessionId,
+      cardId: session.cardId,
       startedAt: session.startedAt,
       history: session.history,
       runtimeStatus: session.runtimeStatus,
@@ -118,6 +119,7 @@ export class StateStore {
       )
 
       return this.createSession(sessionId, {
+        cardId: data.cardId,
         startedAt: data.startedAt,
         history: data.history ?? [],
         activatedCards,
