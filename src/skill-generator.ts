@@ -35,15 +35,6 @@ export function categorizeEntry(entry: WorldbookEntry): SkillCategory {
     return "core-rules"
   }
 
-  // 格式/语气/人称/画风/描写 → style-protocol
-  if (
-    /格式|语气|人称|画风|描写|风格|style|format|语气|视角|tone/.test(
-      titleLower + contentLower.slice(0, 200),
-    )
-  ) {
-    return "style-protocol"
-  }
-
   // 判定/骰子/概率/成功/失败 → judgment-system
   if (
     /判定|骰子|概率|成功|失败|roll|dice|check|难度|dc/.test(titleLower + contentLower.slice(0, 200))
@@ -52,12 +43,22 @@ export function categorizeEntry(entry: WorldbookEntry): SkillCategory {
   }
 
   // 变量/属性/状态/值/数值 → variable-protocol
+  // 放在 style-protocol 之前，避免 "format" 等宽泛关键词误匹配
   if (
     /变量|属性|状态|数值|值域|variable|attribute|stat|value|range/.test(
       titleLower + contentLower.slice(0, 200),
     )
   ) {
     return "variable-protocol"
+  }
+
+  // 格式/语气/人称/画风/描写 → style-protocol
+  if (
+    /格式|语气|人称|画风|描写|风格|style|format|语气|视角|tone/.test(
+      titleLower + contentLower.slice(0, 200),
+    )
+  ) {
+    return "style-protocol"
   }
 
   return "uncategorized"
