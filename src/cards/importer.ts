@@ -662,7 +662,10 @@ function generateWorldbookEntries(
     const keys = entry.keys || entry.key || []
     const keywordList = Array.isArray(keys) ? (keys as string[]) : [keys as string]
     const entryContent = (entry.content as string) || ""
-    const comment = (entry.comment || entry.name || `条目${count + 1}`) as string
+    const comment = ((entry.comment || entry.name || `条目${count + 1}`) as string)
+      .replace(/[\t\n\r]+/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim()
     const priority = (entry.priority ?? entry.insertion_order ?? entry.order ?? count) as number
     const selective = (entry.selective !== undefined ? entry.selective : true) as boolean
     const secondaryKeys = (entry.secondary_keys || entry.keysecondary || []) as string[]
